@@ -1,0 +1,138 @@
+* { box-sizing: border-box; }
+
+html, body, #app {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: transparent;
+  color: #eef2f8;
+  font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+}
+
+#app {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  background: linear-gradient(135deg, #070910 0%, #121a22 100%);
+}
+
+#viewer {
+  position: relative;
+  min-width: 0;
+  min-height: 100vh;
+}
+
+#hud {
+  border-left: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(10, 14, 20, 0.82);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+#hud strong {
+  font-size: 17px;
+}
+
+#hud header {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+#status {
+  color: #9aa6b5;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.panel-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.11);
+}
+
+.file-drop {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 14px;
+  border: 1px dashed rgba(143, 215, 255, 0.45);
+  border-radius: 8px;
+  background: rgba(143, 215, 255, 0.08);
+  cursor: pointer;
+}
+
+.file-drop.compact {
+  padding: 10px 12px;
+}
+
+.file-drop:hover {
+  border-color: rgba(143, 215, 255, 0.88);
+}
+
+.file-drop input {
+  display: none;
+}
+
+.file-drop span {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.file-drop small {
+  color: #9aa6b5;
+  font-size: 11px;
+}
+
+button,
+select {
+  width: 100%;
+  min-height: 34px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.07);
+  color: #eef2f8;
+  font: inherit;
+  font-size: 13px;
+}
+
+button {
+  cursor: pointer;
+  background: rgba(113, 199, 236, 0.18);
+}
+
+button:hover {
+  border-color: rgba(113, 199, 236, 0.75);
+}
+
+select {
+  padding: 0 8px;
+}
+
+select option {
+  background: #111821;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+#log {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  margin: 0;
+  padding: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.28);
+  color: #9aa6b5;
+  font: 11px Consolas, monospace;
+  white-space: pre-wrap;
+}

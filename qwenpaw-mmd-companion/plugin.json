@@ -1,0 +1,55 @@
+{
+  "id": "qwenpaw-mmd-companion",
+  "name": "QwenPaw MMD Companion",
+  "version": "0.1.0",
+  "description": "Modern Three.js PMX/MMD desktop companion for QwenPaw, with avatar tools for PMX loading, VMD playback, expressions, mood, and gestures.",
+  "description_i18n": {
+    "en-US": "Modern Three.js PMX/MMD desktop companion for QwenPaw."
+  },
+  "author": "MMDdongbu",
+  "entry": {
+    "backend": "plugin.py"
+  },
+  "dependencies": [
+    "fastapi>=0.110",
+    "uvicorn>=0.27",
+    "httpx>=0.27"
+  ],
+  "min_version": "1.1.6",
+  "meta": {
+    "desktop_url": "http://127.0.0.1:8098",
+    "renderer": "three-modern",
+    "tools": [
+      {
+        "name": "avatar_load_model",
+        "description": "Load or replace the PMX model used by the MMD desktop companion.",
+        "icon": "3D"
+      },
+      {
+        "name": "avatar_play_vmd",
+        "description": "Play a VMD motion on the current PMX model.",
+        "icon": "VMD"
+      },
+      {
+        "name": "avatar_perform_gesture",
+        "description": "Perform a semantic avatar gesture such as greet_user, thinking, nod, or idle.",
+        "icon": "MMD"
+      },
+      {
+        "name": "avatar_set_expression",
+        "description": "Set a PMX morph expression by name and weight.",
+        "icon": "EXP"
+      },
+      {
+        "name": "avatar_set_mood",
+        "description": "Set companion mood and idle energy.",
+        "icon": "Mood"
+      },
+      {
+        "name": "avatar_get_state",
+        "description": "Get current MMD companion bridge state.",
+        "icon": "Info"
+      }
+    ]
+  }
+}

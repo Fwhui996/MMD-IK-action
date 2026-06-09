@@ -1,0 +1,1 @@
+"""MMD companion backend package."""

@@ -5,6 +5,8 @@ import re
 import shutil
 import tempfile
 import zipfile
+import sys
+import json
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -20,7 +22,9 @@ def create_app(workspace_root: Path) -> Flask:
     workspace_root = workspace_root.resolve()
     frontend_root = workspace_root / "qwenpaw-mmd-companion" / "frontend"
     runtime_models = workspace_root / "qwenpaw-mmd-companion" / "runtime" / "models"
+    runtime_state_file = workspace_root / "qwenpaw-mmd-companion" / "runtime" / "state.json"
     runtime_models.mkdir(parents=True, exist_ok=True)
+    runtime_state_file.parent.mkdir(parents=True, exist_ok=True)
     app = Flask(__name__)
     commands: List[Dict[str, Any]] = []
     state: Dict[str, Any] = {
@@ -30,6 +34,48 @@ def create_app(workspace_root: Path) -> Flask:
         "expression": None,
         "last_command": None,
     }
+
+    def load_runtime_state() -> Dict[str, Any]:
+        try:
+            if runtime_state_file.exists():
+                data = json.loads(runtime_state_file.read_text(encoding="utf-8"))
+                if isinstance(data, dict):
+                    return data
+        except Exception:
+            pass
+        return {}
+
+    def save_runtime_state(**updates: Any) -> Dict[str, Any]:
+        data = load_runtime_state()
+        data.update({k: v for k, v in updates.items() if v is not None})
+        runtime_state_file.write_text(
+            json.dumps(data, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        return data
+
+    def remember_model(path: str, name: str | None = None, vmds: List[str] | None = None) -> Dict[str, Any]:
+        data = load_runtime_state()
+        item = {
+            "path": path,
+            "name": name or Path(path).stem,
+            "vmds": vmds or [],
+        }
+        identity = model_identity(path, item["name"])
+        history = [
+            m for m in data.get("models", [])
+            if isinstance(m, dict)
+            and m.get("path") != path
+            and model_identity(m.get("path", ""), m.get("name")) != identity
+        ]
+        history.insert(0, item)
+        data["last_model"] = item
+        data["models"] = history[:30]
+        runtime_state_file.write_text(
+            json.dumps(data, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        return item
 
     @app.after_request
     def add_cors_headers(response):
@@ -59,7 +105,13 @@ def create_app(workspace_root: Path) -> Flask:
 
     @app.route("/health")
     def health():
-        return jsonify({"ok": True, "service": "qwenpaw-mmd-companion"})
+        return jsonify({
+            "ok": True,
+            "service": "qwenpaw-mmd-companion",
+            "bridgeFile": __file__,
+            "python": sys.executable,
+            "routes": sorted(str(rule) for rule in app.url_map.iter_rules()),
+        })
 
     @app.route("/plugin/<path:filename>")
     def plugin_static(filename: str):
@@ -128,6 +180,10 @@ def create_app(workspace_root: Path) -> Flask:
     def safe_model_name(name: str) -> str:
         cleaned = re.sub(r'[\\/:*?"<>|]', "_", name).strip()
         return cleaned or "model"
+
+    def model_identity(path: str, name: str | None = None) -> str:
+        base = safe_model_name(name or Path(path).stem).lower()
+        return re.sub(r"_\d+$", "", base)
 
     @app.route("/api/models/upload", methods=["OPTIONS"])
     def api_models_upload_options():
@@ -209,16 +265,39 @@ def create_app(workspace_root: Path) -> Flask:
                     for p in target_dir.rglob("*.vmd")
                     if not p.name.startswith("._")
                 ]
+                model_path = f"runtime/models/{model_name}/{model_name}.pmx"
+                remember_model(model_path, model_name, vmds)
                 return jsonify({
                     "ok": True,
                     "name": model_name,
-                    "path": f"runtime/models/{model_name}/{model_name}.pmx",
+                    "path": model_path,
                     "vmds": vmds,
                 })
         except zipfile.BadZipFile:
             return jsonify({"ok": False, "error": "invalid zip file"}), 400
         except Exception as exc:
             return jsonify({"ok": False, "error": str(exc)}), 500
+
+    @app.route("/api/runtime/last-model", methods=["GET", "POST", "OPTIONS"])
+    def api_runtime_last_model():
+        if request.method == "OPTIONS":
+            return "", 204
+        if request.method == "POST":
+            data = request.get_json(silent=True) or {}
+            path = data.get("path")
+            if not path:
+                return jsonify({"ok": False, "error": "missing path"}), 400
+            item = remember_model(path, data.get("name"), data.get("vmds") or [])
+            return jsonify({"ok": True, "last_model": item})
+        data = load_runtime_state()
+        models = data.get("models", [])
+        if not models and data.get("last_model"):
+            models = [data["last_model"]]
+        return jsonify({
+            "ok": True,
+            "last_model": data.get("last_model"),
+            "models": models,
+        })
 
     @app.route("/api/avatar/command", methods=["OPTIONS"])
     def api_command_options():

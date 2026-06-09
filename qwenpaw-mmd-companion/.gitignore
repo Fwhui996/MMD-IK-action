@@ -1,0 +1,6 @@
+runtime/
+tools/
+renderers/three-modern/dist/
+renderers/three-modern/node_modules/.vite/
+renderers/three-modern/node_modules/.package-lock.json
+renderers/three-modern/node_modules/three/examples/jsm/animation/*副本*.js

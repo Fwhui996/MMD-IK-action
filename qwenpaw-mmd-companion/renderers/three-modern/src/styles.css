@@ -89,7 +89,8 @@ html, body, #app {
 }
 
 button,
-select {
+select,
+input[type="range"] {
   width: 100%;
   min-height: 34px;
   border: 1px solid rgba(255, 255, 255, 0.14);
@@ -117,10 +118,57 @@ select option {
   background: #111821;
 }
 
+.toggle-row,
+.control-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 34px;
+  color: #dce6f2;
+  font-size: 13px;
+}
+
+.control-row {
+  grid-template-columns: 1fr;
+  gap: 6px;
+}
+
+.toggle-row input {
+  width: 18px;
+  height: 18px;
+  accent-color: #71c7ec;
+}
+
+.control-row b {
+  color: #8fd7ff;
+  font-weight: 700;
+}
+
+input[type="range"] {
+  padding: 0;
+  accent-color: #71c7ec;
+  background: transparent;
+}
+
 .row {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 8px;
+}
+
+.render-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.render-settings.collapsed {
+  display: none;
 }
 
 #log {

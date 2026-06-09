@@ -85,8 +85,7 @@ def _spawn_desktop() -> tuple[bool, str | None]:
 
     cmd = [
         sys.executable,
-        "-m",
-        "backend.desktop_app",
+        str(PLUGIN_ROOT / "backend" / "desktop_app.py"),
         "--host",
         host,
         "--port",

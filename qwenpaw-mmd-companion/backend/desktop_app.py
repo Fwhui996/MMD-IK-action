@@ -10,7 +10,11 @@ import sys
 import threading
 from pathlib import Path
 
-from .bridge_server import create_app
+try:
+    from .bridge_server import create_app
+except ImportError:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from backend.bridge_server import create_app
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]

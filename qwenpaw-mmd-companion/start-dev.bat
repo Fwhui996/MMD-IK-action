@@ -23,4 +23,4 @@ echo Renderer: http://127.0.0.1:5178/?bridge=http://127.0.0.1:8098
 echo.
 echo Keep this window open. Press Ctrl+C to stop.
 echo.
-python -m backend.desktop_app
+python "%~dp0backend\desktop_app.py"

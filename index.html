@@ -1,0 +1,649 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MMD 动作演示 — MotionArtisan IK Engine</title>
+<style>
+:root {
+  --bg: #0d1117;
+  --panel-bg: #161b22;
+  --border: #30363d;
+  --text: #e6edf3;
+  --text-dim: #8b949e;
+  --accent: #58a6ff;
+  --success: #3fb950;
+  --danger: #f85149;
+  --purple: #bc8cff;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif;
+  height: 100vh;
+  overflow: hidden;
+  display: flex;
+}
+
+/* ── 3D Viewer ── */
+#viewer {
+  flex: 1;
+  position: relative;
+  min-width: 0;
+  background: var(--bg);
+}
+
+#viewer-hint {
+  position: absolute; bottom: 12px; left: 50%;
+  transform: translateX(-50%);
+  color: rgba(255,255,255,0.4);
+  font-size: 12px;
+  pointer-events: none;
+  z-index: 10;
+}
+
+#status {
+  position: absolute; top: 12px; left: 12px;
+  color: var(--text-dim); font-size: 12px;
+  background: rgba(0,0,0,0.6);
+  padding: 4px 10px; border-radius: 4px;
+  z-index: 10;
+}
+
+#loading-overlay {
+  position: absolute; inset: 0;
+  background: rgba(0,0,0,0.9);
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  z-index: 20; transition: opacity 0.3s;
+}
+#loading-overlay.hidden { opacity: 0; pointer-events: none; }
+#loading-text { color: var(--text-dim); font-size: 14px; margin-bottom: 8px; }
+#loading-bar {
+  width: 200px; height: 4px; background: var(--border); border-radius: 2px;
+  overflow: hidden;
+}
+#loading-fill {
+  width: 0%; height: 100%; background: var(--accent);
+  transition: width 0.2s;
+}
+
+/* ── Control Panel ── */
+#panel {
+  width: 340px; min-width: 300px;
+  background: var(--panel-bg);
+  border-left: 1px solid var(--border);
+  display: flex; flex-direction: column;
+  overflow-y: auto;
+}
+
+.panel-header {
+  padding: 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.panel-header h2 {
+  font-size: 18px; font-weight: 700;
+  background: linear-gradient(90deg, var(--purple), var(--accent));
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  margin-bottom: 4px;
+}
+
+.panel-header small {
+  color: var(--text-dim); font-size: 11px;
+}
+
+.section {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.section-title {
+  font-size: 11px; color: var(--text-dim); text-transform: uppercase;
+  font-weight: 600; margin-bottom: 8px; letter-spacing: 0.5px;
+}
+
+.btn {
+  padding: 8px 16px; border-radius: 6px;
+  border: 1px solid var(--border);
+  background: #1c2128; color: var(--text);
+  cursor: pointer; font-size: 13px;
+  transition: all 0.15s;
+  width: 100%; margin-bottom: 6px;
+}
+.btn:hover { border-color: var(--accent); color: var(--accent); }
+.btn:active { transform: scale(0.98); }
+.btn.primary { background: var(--purple); border-color: var(--purple); color: #fff; }
+.btn.primary:hover { background: #9f7cf7; }
+.btn.success { background: #1a3a2a; border-color: var(--success); color: var(--success); }
+.btn.success:hover { background: #1f4a30; }
+
+.btn-row { display: flex; gap: 6px; }
+.btn-row .btn { margin-bottom: 0; }
+
+select, input[type="file"] {
+  width: 100%; padding: 8px; border-radius: 6px;
+  background: var(--bg); color: var(--text);
+  border: 1px solid var(--border); font-size: 13px;
+  margin-bottom: 6px;
+}
+
+input[type="range"] {
+  width: 100%; accent-color: var(--purple); cursor: pointer;
+}
+
+.range-row {
+  display: flex; align-items: center; gap: 8px; margin: 4px 0;
+}
+.range-row label { font-size: 11px; color: var(--text-dim); min-width: 40px; }
+.range-row span { font-size: 11px; color: var(--accent); min-width: 30px; text-align: right; }
+
+.log-area {
+  flex: 1; min-height: 120px; max-height: 200px;
+  overflow-y: auto; padding: 8px 12px;
+  font-size: 11px; font-family: 'Consolas', monospace;
+  color: var(--text-dim);
+}
+.log-line { padding: 2px 0; }
+.log-line.ok { color: var(--success); }
+.log-line.err { color: var(--danger); }
+.log-line.info { color: var(--accent); }
+
+.file-input-label {
+  display: block; padding: 8px; border-radius: 6px;
+  border: 1px dashed var(--border); cursor: pointer;
+  text-align: center; color: var(--text-dim); font-size: 12px;
+  margin-bottom: 6px; transition: border-color 0.15s;
+}
+.file-input-label:hover { border-color: var(--accent); }
+.file-input-label input { display: none; }
+
+.check-row {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 12px; color: var(--text-dim); margin: 4px 0;
+}
+
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+</style>
+</head>
+<body>
+
+<!-- ===== 3D Viewer ===== -->
+<div id="viewer">
+  <div id="loading-overlay">
+    <div id="loading-text">正在初始化...</div>
+    <div id="loading-bar"><div id="loading-fill"></div></div>
+  </div>
+  <div id="status">Initializing...</div>
+  <div id="viewer-hint">左键旋转 | 滚轮缩放 | 右键平移</div>
+</div>
+
+<!-- ===== Control Panel ===== -->
+<div id="panel">
+  <div class="panel-header">
+    <h2>MMD Motion Artisan</h2>
+    <small>IK 动作系统 · 渲染引擎</small>
+  </div>
+
+  <div class="section">
+    <div class="section-title">模型</div>
+    <label class="file-input-label">
+      拖放或点击选择 PMX 模型
+      <input type="file" id="model-file" accept=".pmx" onchange="onModelFileSelect(event)">
+    </label>
+    <select id="model-preset" onchange="onModelPreset()">
+      <option value="">选择内置模型...</option>
+    </select>
+  </div>
+
+  <div class="section">
+    <div class="section-title">渲染</div>
+    <div class="range-row">
+      <label>描边</label>
+      <input type="range" id="rng-outline" min="0" max="20" value="4" 
+             oninput="onOutlineChange(this.value)">
+      <span id="val-outline">0.004</span>
+    </div>
+    <div class="range-row">
+      <label>环境光</label>
+      <input type="range" id="rng-ambient" min="0" max="200" value="70"
+             oninput="onAmbientChange(this.value)">
+      <span id="val-ambient">0.70</span>
+    </div>
+    <div class="range-row">
+      <label>本影</label>
+      <input type="range" id="rng-shadow" min="0" max="100" value="100"
+             oninput="onShadowChange(this.value)">
+      <span id="val-shadow">100%</span>
+    </div>
+    <div class="check-row">
+      <input type="checkbox" id="chk-physics" checked onchange="onPhysicsToggle(this.checked)">
+      <label>物理模拟</label>
+    </div>
+    <div class="check-row">
+      <input type="checkbox" id="chk-ik" checked onchange="onIKToggle(this.checked)">
+      <label>IK 约束</label>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">IK 目标控制</div>
+    <div class="range-row">
+      <label>右臂 X</label>
+      <input type="range" id="rng-ik-rx" min="-10" max="15" value="5" step="0.1"
+             oninput="onIKTargetChange()">
+      <span id="val-ik-rx">5</span>
+    </div>
+    <div class="range-row">
+      <label>右臂 Y</label>
+      <input type="range" id="rng-ik-ry" min="0" max="20" value="12" step="0.1"
+             oninput="onIKTargetChange()">
+      <span id="val-ik-ry">12</span>
+    </div>
+    <div class="range-row">
+      <label>右臂 Z</label>
+      <input type="range" id="rng-ik-rz" min="-5" max="15" value="5" step="0.1"
+             oninput="onIKTargetChange()">
+      <span id="val-ik-rz">5</span>
+    </div>
+    <div class="range-row">
+      <label>左臂 X</label>
+      <input type="range" id="rng-ik-lx" min="-15" max="10" value="-5" step="0.1"
+             oninput="onIKTargetChange()">
+      <span id="val-ik-lx">-5</span>
+    </div>
+    <div class="range-row">
+      <label>左臂 Y</label>
+      <input type="range" id="rng-ik-ly" min="0" max="20" value="12" step="0.1"
+             oninput="onIKTargetChange()">
+      <span id="val-ik-ly">12</span>
+    </div>
+    <div class="range-row">
+      <label>左臂 Z</label>
+      <input type="range" id="rng-ik-lz" min="-5" max="15" value="5" step="0.1"
+             oninput="onIKTargetChange()">
+      <span id="val-ik-lz">5</span>
+    </div>
+    <div class="btn-row">
+      <button class="btn primary" onclick="applyIKTargets()">应用 IK</button>
+      <button class="btn" onclick="resetIK()">重置</button>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Motion Artisan — 意图→动作</div>
+    <button class="btn success" onclick="testCrouch()">蹲下</button>
+    <button class="btn success" onclick="testWave()">挥手</button>
+    <button class="btn" onclick="testIdle()">待机</button>
+  </div>
+
+  <div class="log-area" id="log"></div>
+</div>
+
+<!-- ===== SCRIPTS ===== -->
+<script src="libs/ammo.js"></script>
+<script src="libs/mmdparser.min.js"></script>
+<script src="libs/three.min.js"></script>
+<script src="libs/OutlineEffect.js"></script>
+<script src="libs/CCDIKSolver.js"></script>
+<script src="libs/MMDPhysics.js"></script>
+<script src="libs/TGALoader.js"></script>
+<script src="libs/MMDLoader.js"></script>
+<script src="libs/OrbitControls.js"></script>
+<script src="libs/MMDAnimationHelper.js"></script>
+
+<script src="motion_artisan/playback_mode.js?v=1"></script>
+<script src="motion_artisan/types.js?v=1"></script>
+<script src="motion_artisan/mpl_capability_catalog.js?v=1"></script>
+<script src="motion_artisan/motion_state.js?v=1"></script>
+<script src="motion_artisan/motion_timing_policy.js?v=1"></script>
+<script src="motion_artisan/anatomy_limits.js?v=1"></script>
+<script src="motion_artisan/current_pose.js?v=1"></script>
+<script src="motion_artisan/model_profile.js?v=1"></script>
+<script src="motion_artisan/model_data_extractor.js?v=1"></script>
+<script src="motion_artisan/model_calibration.js?v=1"></script>
+<script src="motion_artisan/calibration_cache.js?v=1"></script>
+<script src="motion_artisan/pmx_collision_profile.js?v=1"></script>
+<script src="motion_artisan/fk_engine.js?v=1"></script>
+<script src="motion_artisan/collision_shapes.js?v=1"></script>
+<script src="motion_artisan/ground_contact.js?v=1"></script>
+<script src="motion_artisan/safety_contract.js?v=1"></script>
+<script src="motion_artisan/pose_targets.js?v=1"></script>
+<script src="motion_artisan/ik_solver_bridge.js?v=1"></script>
+<script src="motion_artisan/trajectory_solver.js?v=1"></script>
+<script src="motion_artisan/effector_mapper.js?v=1"></script>
+<script src="motion_artisan/trajectory_interpolator.js?v=1"></script>
+<script src="motion_artisan/collision_validator.js?v=1"></script>
+<script src="motion_artisan/smoothness_metrics.js?v=1"></script>
+<script src="motion_artisan/semantic_validator.js?v=1"></script>
+<script src="motion_artisan/vmd_reference_library.js?v=1"></script>
+<script src="motion_artisan/degradation_policy.js?v=1"></script>
+<script src="motion_artisan/motion_scorer.js?v=1"></script>
+<script src="motion_artisan/mpl_emitter.js?v=1"></script>
+<script src="motion_artisan/ik_motion_player.js?v=1"></script>
+<script src="motion_artisan/arm_ik_driver.js?v=1"></script>
+<script src="motion_artisan/debug_overlay.js?v=1"></script>
+<script src="motion_artisan/index.js?v=1"></script>
+
+<script src="renderer.js"></script>
+
+<script>
+// ============================================================
+// App Logic
+// ============================================================
+
+var _modelLoaded = false;
+
+// ── 日志 ──
+function log(msg, cls) {
+  var el = document.getElementById('log');
+  el.innerHTML += '<div class="log-line ' + (cls || '') + '">' + msg + '</div>';
+  el.scrollTop = el.scrollHeight;
+}
+
+// ── 模型文件选择 ──
+function onModelFileSelect(e) {
+  var file = e.target.files[0];
+  if (!file) return;
+  var url = URL.createObjectURL(file);
+  loadModelFromURL(url, file.name);
+}
+
+function onModelPreset() {
+  var sel = document.getElementById('model-preset');
+  var path = sel.value;
+  if (!path) return;
+  loadModelFromURL(path, path.split('/').pop());
+}
+
+function loadModelFromURL(url, name) {
+  if (_modelLoaded) {
+    location.reload();
+    return;
+  }
+
+  setStatus('加载模型: ' + name + '...');
+  showLoading(true);
+
+  MMDRenderer.loadModel(url, {
+    onProgress: function(pct) {
+      document.getElementById('loading-text').textContent = '加载中... ' + pct + '%';
+      document.getElementById('loading-fill').style.width = pct + '%';
+    }
+  }).then(function() {
+    _modelLoaded = true;
+    showLoading(false);
+    setStatus('就绪: ' + name + ' (' + MMDRenderer.getState().model.skeleton.bones.length + ' 骨骼)');
+    log('模型加载成功: ' + name, 'ok');
+
+    // 初始化 MotionArtisan
+    var state = MMDRenderer.getState();
+    try {
+      if (window.MotionArtisan && window.MotionArtisan.init) {
+        window.MotionArtisan.init({
+          THREE: THREE,
+          model: state.model,
+          helper: state.helper,
+          restPoseQuat: state.restPoseQuat,
+          restPosePos: state.restPosePos,
+          compiler: null
+        });
+        log('MotionArtisan 初始化完成', 'ok');
+      } else {
+        log('MotionArtisan 未加载', 'err');
+      }
+    } catch (e) {
+      log('MotionArtisan init 失败: ' + e.message, 'err');
+    }
+
+    // 扫描模型目录
+    scanModelsDir();
+  }).catch(function(e) {
+    showLoading(false);
+    setStatus('加载失败: ' + e.message);
+    log('模型加载失败: ' + e.message, 'err');
+  });
+}
+
+// ── 自动检测 models/ 目录下的 PMX ──
+function scanModelsDir() {
+  var sel = document.getElementById('model-preset');
+  // 尝试 list
+  fetch('/api/models')
+    .then(function(r) { return r.json(); })
+    .then(function(list) {
+      list.forEach(function(m) {
+        var opt = document.createElement('option');
+        opt.value = m.path;
+        opt.textContent = m.name;
+        sel.appendChild(opt);
+      });
+    })
+    .catch(function() {
+      // 无服务器 — 使用本地文件选择
+      sel.innerHTML = '<option value="">选择内置模型（需要服务器）...</option>';
+    });
+}
+
+// ── 渲染控制 ──
+function onOutlineChange(val) {
+  var t = parseInt(val) / 1000;
+  document.getElementById('val-outline').textContent = t.toFixed(3);
+  var state = MMDRenderer.getState();
+  if (state.model) {
+    state.model.traverse(function(child) {
+      if (child.isSkinnedMesh) {
+        var mats = Array.isArray(child.material) ? child.material : [child.material];
+        mats.forEach(function(m) {
+          if (m && m.userData.outlineParameters) {
+            m.userData.outlineParameters.thickness = t;
+            m.userData.outlineParameters.visible = t > 0;
+          }
+        });
+      }
+    });
+  }
+}
+
+function onAmbientChange(val) {
+  var v = parseInt(val) / 100;
+  document.getElementById('val-ambient').textContent = v.toFixed(2);
+  var state = MMDRenderer.getState();
+  if (state.ambient) {
+    state.ambient.intensity = v;
+  }
+}
+
+function onShadowChange(val) {
+  document.getElementById('val-shadow').textContent = val + '%';
+  var multiplier = parseInt(val) / 100;
+  var state = MMDRenderer.getState();
+  if (state.model) {
+    state.model.traverse(function(child) {
+      if (child.isSkinnedMesh) {
+        var mats = Array.isArray(child.material) ? child.material : [child.material];
+        mats.forEach(function(m) {
+          if (m && m._baseEmissive) {
+            m.emissive.copy(m._baseEmissive).multiplyScalar(multiplier);
+          }
+        });
+      }
+    });
+  }
+}
+
+function onPhysicsToggle(val) {
+  MMDRenderer.setPhysics(val);
+  log('物理: ' + (val ? 'ON' : 'OFF'), 'info');
+}
+
+function onIKToggle(val) {
+  MMDRenderer.setIK(val);
+  log('IK: ' + (val ? 'ON' : 'OFF'), 'info');
+}
+
+// ── IK 目标控制 ──
+function onIKTargetChange() {
+  var ids = ['rx','ry','rz','lx','ly','lz'];
+  ids.forEach(function(id) {
+    document.getElementById('val-ik-' + id).textContent = 
+      document.getElementById('rng-ik-' + id).value;
+  });
+}
+
+function applyIKTargets() {
+  if (!window.ArmIKDriver) {
+    log('ArmIKDriver 未加载', 'err');
+    return;
+  }
+
+  var rx = parseFloat(document.getElementById('rng-ik-rx').value);
+  var ry = parseFloat(document.getElementById('rng-ik-ry').value);
+  var rz = parseFloat(document.getElementById('rng-ik-rz').value);
+  var lx = parseFloat(document.getElementById('rng-ik-lx').value);
+  var ly = parseFloat(document.getElementById('rng-ik-ly').value);
+  var lz = parseFloat(document.getElementById('rng-ik-lz').value);
+
+  try {
+    window.ArmIKDriver.setRightTarget(rx, ry, rz);
+    window.ArmIKDriver.setLeftTarget(lx, ly, lz);
+    window.ArmIKDriver.update();
+    log('IK applied: R(' + rx + ',' + ry + ',' + rz + ') L(' + lx + ',' + ly + ',' + lz + ')', 'ok');
+  } catch(e) {
+    log('IK error: ' + e.message, 'err');
+  }
+}
+
+function resetIK() {
+  if (!window.ArmIKDriver) return;
+  try {
+    window.ArmIKDriver.reset();
+    // Reset sliders
+    document.getElementById('rng-ik-rx').value = 5;
+    document.getElementById('rng-ik-ry').value = 12;
+    document.getElementById('rng-ik-rz').value = 5;
+    document.getElementById('rng-ik-lx').value = -5;
+    document.getElementById('rng-ik-ly').value = 12;
+    document.getElementById('rng-ik-lz').value = 5;
+    onIKTargetChange();
+    log('IK 已重置', 'info');
+  } catch(e) {
+    log('Reset error: ' + e.message, 'err');
+  }
+}
+
+// ── Motion Artisan 演示 ──
+function testCrouch() {
+  if (!window.MotionArtisan || !window.MotionArtisan.solveAndEmitMPL) {
+    log('MotionArtisan 不可用', 'err');
+    return;
+  }
+  log('执行: 蹲下', 'info');
+
+  var plan = {
+    intent: '蹲下',
+    motionMode: 'explicit_action',
+    stages: [
+      { name: 'prepare', targets: [
+        { body: 'center', goal: 'lower_center', amount: 30 },
+        { body: 'knee_r', goal: 'bend_backward', amount: 40 },
+        { body: 'knee_l', goal: 'bend_backward', amount: 40 }
+      ]},
+      { name: 'settle', targets: [
+        { body: 'center', goal: 'settle_smoothly', amount: 0 },
+        { body: 'hip', goal: 'settle_smoothly', amount: 0 }
+      ]}
+    ]
+  };
+
+  try {
+    var result = window.MotionArtisan.solveAndEmitMPL(plan);
+    log('result: ' + JSON.stringify(result).substring(0, 200), result.ok ? 'ok' : 'err');
+  } catch(e) {
+    log('Error: ' + e.message, 'err');
+  }
+}
+
+function testWave() {
+  if (!window.MotionArtisan || !window.MotionArtisan.playEffectorMotion) {
+    log('MotionArtisan 不可用', 'err');
+    return;
+  }
+
+  log('执行: 挥手', 'info');
+
+  var wave = {
+    motion: {
+      duration: 3,
+      keyframes: [
+        { t: 0,   effectors: { right_hand: { x: 5, y:12, z:5 }, left_hand: { x:-5, y:12, z:5 } } },
+        { t: 0.5, effectors: { right_hand: { x: 5, y:15, z:3 }, left_hand: { x:-5, y:12, z:5 } } },
+        { t: 1,   effectors: { right_hand: { x: 5, y:12, z:5 }, left_hand: { x:-5, y:15, z:3 } } },
+        { t: 1.5, effectors: { right_hand: { x: 5, y:15, z:3 }, left_hand: { x:-5, y:12, z:5 } } },
+        { t: 2,   effectors: { right_hand: { x: 5, y:12, z:5 }, left_hand: { x:-5, y:15, z:3 } } },
+        { t: 2.5, effectors: { right_hand: { x: 5, y:15, z:3 }, left_hand: { x:-5, y:12, z:5 } } },
+        { t: 3,   effectors: { right_hand: { x: 5, y:12, z:5 }, left_hand: { x:-5, y:12, z:5 } } }
+      ]
+    }
+  };
+
+  try {
+    window.MotionArtisan.playEffectorMotion(wave);
+    log('挥手动作已启动', 'ok');
+  } catch(e) {
+    log('Error: ' + e.message, 'err');
+  }
+}
+
+function testIdle() {
+  if (!window.MotionArtisan) return;
+  log('待机', 'info');
+  try {
+    if (window.MotionArtisan.stopAll) window.MotionArtisan.stopAll();
+  } catch(e) {}
+}
+
+// ── UI helpers ──
+function showLoading(show) {
+  var el = document.getElementById('loading-overlay');
+  if (show) {
+    el.classList.remove('hidden');
+  } else {
+    el.classList.add('hidden');
+  }
+}
+
+function setStatus(text) {
+  document.getElementById('status').textContent = text;
+}
+
+// ── Startup ──
+(function main() {
+  setStatus('初始化渲染引擎...');
+  showLoading(true);
+  document.getElementById('loading-text').textContent = '初始化 3D 场景...';
+
+  try {
+    MMDRenderer.initScene('viewer', { bgColor: 0x0d1117 });
+    MMDRenderer.startLoop();
+    setStatus('就绪 — 请拖放 PMX 模型到左侧面板');
+    showLoading(false);
+    log('渲染引擎启动成功', 'ok');
+    log('Three.js r' + THREE.REVISION, 'info');
+    log('MMDRenderer v1.0', 'info');
+
+    scanModelsDir();
+  } catch (e) {
+    showLoading(false);
+    setStatus('初始化失败: ' + e.message);
+    log('初始化失败: ' + e.message, 'err');
+  }
+})();
+
+</script>
+</body>
+</html>

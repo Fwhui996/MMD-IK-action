@@ -1,0 +1,18 @@
+.DS_Store
+Thumbs.db
+
+__pycache__/
+*.py[cod]
+.Python
+.venv/
+venv/
+env/
+
+.idea/
+.vscode/
+
+*.log
+
+# Local MMD model assets can be large and user-specific.
+models/*
+!models/.gitkeep

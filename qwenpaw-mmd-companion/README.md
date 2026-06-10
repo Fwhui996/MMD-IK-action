@@ -37,6 +37,14 @@ If `node_modules` is missing, the script runs `npm install` once.
 
 ## QwenPaw Install
 
+Build the renderer once before installing or packaging:
+
+```text
+cd renderers\three-modern
+npm install
+npm run build
+```
+
 ```text
 install-plugin.bat
 ```
@@ -48,3 +56,11 @@ package-plugin.bat
 ```
 
 Restart QwenPaw after install. The plugin registers avatar tools and autostarts the desktop bridge unless `QWENPAW_MMD_AUTOSTART=0`.
+
+The plugin frontend is served at:
+
+```text
+http://127.0.0.1:8098/
+```
+
+Use `QWENPAW_MMD_DEV_RENDERER=1` only when developing the Vite renderer at `127.0.0.1:5178`.

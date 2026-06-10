@@ -63,7 +63,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     renderer_proc = None
-    if not args.no_renderer:
+    dist_index = PLUGIN_ROOT / "renderers" / "three-modern" / "dist" / "index.html"
+    use_vite = os.environ.get("QWENPAW_MMD_DEV_RENDERER", "0") == "1"
+    if not args.no_renderer and use_vite:
+        renderer_proc = _run_renderer(args.port)
+        print("Renderer URL: http://127.0.0.1:5178/?bridge=http://127.0.0.1:%s" % args.port)
+    elif dist_index.exists():
+        print("Renderer URL: http://127.0.0.1:%s/" % args.port)
+    elif not args.no_renderer:
         renderer_proc = _run_renderer(args.port)
         print("Renderer URL: http://127.0.0.1:5178/?bridge=http://127.0.0.1:%s" % args.port)
 

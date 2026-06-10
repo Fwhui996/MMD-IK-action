@@ -8,6 +8,8 @@ import { MMDParser } from 'three/addons/libs/mmdparser.module.js';
 import './styles.css';
 
 const bridgeBaseUrl = new URLSearchParams(window.location.search).get('bridge') || 'http://127.0.0.1:8098';
+const LAST_MODEL_STORAGE_KEY = 'qwenpaw-mmd-last-model/v1';
+const OUTLINE_VISIBLE_THRESHOLD = 0.002;
 
 const state = {
   scene: null,
@@ -20,6 +22,7 @@ const state = {
   rimLight: null,
   helper: null,
   mesh: null,
+  sceneModel: null,
   mixerClock: new THREE.Clock(),
   currentModel: null,
   currentMotion: null,
@@ -28,6 +31,7 @@ const state = {
   packageFiles: new Map(),
   packagePmxx: [],
   packageVmds: [],
+  sceneModels: [],
   physics: true,
   ik: true,
   expressions: [],
@@ -37,23 +41,28 @@ const state = {
   pmxMaterialMorphs: new Map(),
   pmxMorphWeights: new Map(),
   materialBaseStates: new Map(),
+  sceneMaterialBaseStates: new Map(),
   outlineFrame: 0,
   ammoReady: false,
   isPlaying: false,
   softEnabled: true,
+  pmxCompatFixes: true,
   softBoneIndices: [],
   softRestQuats: [],
   rigidBodyDebug: null,
   cameraMinDistance: 0.5,
   cameraMaxDistance: 80,
   renderSettings: {
-    outline: 0.004,
-    ambient: 0.78,
-    key: 1.25,
-    rim: 0.45,
-    exposure: 1.05,
-    saturation: 1.16,
-    contrast: 1.06,
+    global: {
+      outline: 0.004,
+      brightness: 1,
+      saturation: 1,
+      contrast: 1,
+      ambient: 0.78,
+      key: 1.25,
+      rim: 0.45,
+      exposure: 1.05,
+    },
   },
 };
 
@@ -91,11 +100,28 @@ const EXPRESSION_PRESETS = {
 
 const app = document.querySelector('#app');
 app.innerHTML = `
-  <main id="viewer"></main>
+  <main id="viewer">
+    <div id="chatDock">
+      <button id="chatDockToggle" type="button">对话</button>
+      <div id="chatDockPanel">
+        <div id="chatHistoryWrap">
+          <div id="chatHistory" aria-live="polite">
+            <div id="chatEmpty">QwenPaw 的回复会显示在这里</div>
+          </div>
+        </div>
+        <div id="chatInputRow">
+          <input id="chatInput" type="text" placeholder="输入要发给 QwenPaw 的内容" />
+          <button id="sendChatBtn" type="button">发送</button>
+        </div>
+        <div id="chatStatus">准备发送到 QwenPaw</div>
+      </div>
+    </div>
+  </main>
   <aside id="hud">
     <header>
       <strong>QwenPaw MMD 桌宠</strong>
       <span id="status">正在启动 Three.js 渲染器...</span>
+      <button id="hudCollapseBtn" type="button">折叠面板</button>
     </header>
 
     <section class="panel-section">
@@ -108,21 +134,31 @@ app.innerHTML = `
         <option value="">还没有导入 PMX</option>
       </select>
       <button id="loadPackageModelBtn">加载选中的 PMX</button>
+      <button id="deleteModelBtn" type="button">删除选中人物模型</button>
     </section>
 
     <section class="panel-section">
       <label class="file-drop compact">
-        <input id="pmxInput" type="file" accept=".pmx" />
-        <span>单独加载 PMX</span>
+        <input id="pmxInput" type="file" accept=".zip" />
+        <span>加载场景模型</span>
       </label>
+      <select id="sceneModelSelect">
+        <option value="">还没有导入场景</option>
+      </select>
+      <button id="loadSceneModelBtn" type="button">加载选中场景</button>
+      <button id="deleteSceneModelBtn" type="button">删除选中场景</button>
+    </section>
+
+    <section class="panel-section">
       <label class="file-drop compact">
         <input id="vmdInput" type="file" accept=".vmd" />
-        <span>播放 VMD 动作</span>
+        <span>导入 VMD 动作</span>
       </label>
       <select id="packageVmdSelect">
-        <option value="">压缩包里没有 VMD</option>
+        <option value="">还没有导入 VMD</option>
       </select>
-      <button id="playPackageVmdBtn">播放选中的 VMD</button>
+      <button id="playPackageVmdBtn">播放选中 VMD</button>
+      <button id="deleteVmdBtn" type="button">删除选中 VMD</button>
     </section>
 
     <section class="panel-section">
@@ -138,9 +174,11 @@ app.innerHTML = `
         <span>软部件保护</span>
         <input id="softToggle" type="checkbox" checked />
       </label>
+      <label class="toggle-row">
+        <span>PMX 兼容修复</span>
+        <input id="pmxCompatToggle" type="checkbox" checked />
+      </label>
       <button id="resetPhysicsBtn">重置物理</button>
-      <button id="rigidBodyDebugBtn" type="button">显示刚体</button>
-      <button id="physicsInspectBtn" type="button">物理诊断</button>
       <label class="control-row">
         <span>表情/材质表情</span>
         <select id="expressionSelect">
@@ -162,6 +200,18 @@ app.innerHTML = `
           <input id="outlineRange" type="range" min="0" max="0.012" step="0.0005" value="0.004" />
         </label>
         <label class="control-row">
+          <span>亮度 <b id="brightnessValue">1.00</b></span>
+          <input id="brightnessRange" type="range" min="0.2" max="2" step="0.01" value="1" />
+        </label>
+        <label class="control-row">
+          <span>饱和度 <b id="saturationValue">1.00</b></span>
+          <input id="saturationRange" type="range" min="0" max="2" step="0.01" value="1" />
+        </label>
+        <label class="control-row">
+          <span>对比度 <b id="contrastValue">1.00</b></span>
+          <input id="contrastRange" type="range" min="0.2" max="2" step="0.01" value="1" />
+        </label>
+        <label class="control-row">
           <span>环境光 <b id="ambientValue">0.78</b></span>
           <input id="ambientRange" type="range" min="0" max="2" step="0.01" value="0.78" />
         </label>
@@ -177,18 +227,12 @@ app.innerHTML = `
           <span>曝光 <b id="exposureValue">1.05</b></span>
           <input id="exposureRange" type="range" min="0.5" max="2" step="0.01" value="1.05" />
         </label>
-        <label class="control-row">
-          <span>饱和度 <b id="saturationValue">1.16</b></span>
-          <input id="saturationRange" type="range" min="0.5" max="2" step="0.01" value="1.16" />
-        </label>
-        <label class="control-row">
-          <span>对比度 <b id="contrastValue">1.06</b></span>
-          <input id="contrastRange" type="range" min="0.5" max="1.8" step="0.01" value="1.06" />
-        </label>
+        <button id="saveRenderSettingsBtn" type="button">保存渲染方案</button>
       </div>
     </section>
 
-    <pre id="log"></pre>
+    <button id="logToggleBtn" type="button">显示/隐藏日志</button>
+    <pre id="log" class="collapsed"></pre>
   </aside>
 `;
 
@@ -198,26 +242,40 @@ const packageInput = document.querySelector('#packageInput');
 const pmxInput = document.querySelector('#pmxInput');
 const vmdInput = document.querySelector('#vmdInput');
 const packageModelSelect = document.querySelector('#packageModelSelect');
+const sceneModelSelect = document.querySelector('#sceneModelSelect');
 const packageVmdSelect = document.querySelector('#packageVmdSelect');
+const deleteModelBtn = document.querySelector('#deleteModelBtn');
+const loadSceneModelBtn = document.querySelector('#loadSceneModelBtn');
+const deleteSceneModelBtn = document.querySelector('#deleteSceneModelBtn');
+const deleteVmdBtn = document.querySelector('#deleteVmdBtn');
+const hudCollapseBtn = document.querySelector('#hudCollapseBtn');
 const physicsToggle = document.querySelector('#physicsToggle');
 const ikToggle = document.querySelector('#ikToggle');
 const softToggle = document.querySelector('#softToggle');
+const pmxCompatToggle = document.querySelector('#pmxCompatToggle');
 const resetPhysicsBtn = document.querySelector('#resetPhysicsBtn');
-const rigidBodyDebugBtn = document.querySelector('#rigidBodyDebugBtn');
-const physicsInspectBtn = document.querySelector('#physicsInspectBtn');
 const expressionSelect = document.querySelector('#expressionSelect');
 const expressionWeight = document.querySelector('#expressionWeight');
 const expressionWeightLabel = document.querySelector('#expressionWeightLabel');
+const chatInput = document.querySelector('#chatInput');
+const sendChatBtn = document.querySelector('#sendChatBtn');
+const chatDock = document.querySelector('#chatDock');
+const chatDockToggle = document.querySelector('#chatDockToggle');
+const chatHistory = document.querySelector('#chatHistory');
+const chatStatus = document.querySelector('#chatStatus');
+const logToggleBtn = document.querySelector('#logToggleBtn');
 const renderSettingsToggle = document.querySelector('#renderSettingsToggle');
 const renderSettingsPanel = document.querySelector('#renderSettingsPanel');
+const saveRenderSettingsBtn = document.querySelector('#saveRenderSettingsBtn');
 const renderControls = {
   outline: { input: document.querySelector('#outlineRange'), label: document.querySelector('#outlineValue'), digits: 4 },
+  brightness: { input: document.querySelector('#brightnessRange'), label: document.querySelector('#brightnessValue'), digits: 2 },
+  saturation: { input: document.querySelector('#saturationRange'), label: document.querySelector('#saturationValue'), digits: 2 },
+  contrast: { input: document.querySelector('#contrastRange'), label: document.querySelector('#contrastValue'), digits: 2 },
   ambient: { input: document.querySelector('#ambientRange'), label: document.querySelector('#ambientValue'), digits: 2 },
   key: { input: document.querySelector('#keyRange'), label: document.querySelector('#keyValue'), digits: 2 },
   rim: { input: document.querySelector('#rimRange'), label: document.querySelector('#rimValue'), digits: 2 },
   exposure: { input: document.querySelector('#exposureRange'), label: document.querySelector('#exposureValue'), digits: 2 },
-  saturation: { input: document.querySelector('#saturationRange'), label: document.querySelector('#saturationValue'), digits: 2 },
-  contrast: { input: document.querySelector('#contrastRange'), label: document.querySelector('#contrastValue'), digits: 2 },
 };
 
 function log(message) {
@@ -296,8 +354,14 @@ function basename(path) {
   return normalizeZipPath(path).split('/').pop();
 }
 
+function cleanModelName(model) {
+  const raw = String(model?.name || '');
+  const source = raw.includes('/') || raw.includes('\\') ? basename(raw) : (raw || basename(model?.path || ''));
+  return source.replace(/\.pmx$/i, '') || basename(model?.path || '') || '模型';
+}
+
 function modelIdentity(model) {
-  const source = String(model?.name || basename(model?.path || '') || '').replace(/\.pmx$/i, '');
+  const source = String(basename(model?.path || '') || cleanModelName(model)).replace(/\.pmx$/i, '');
   return source.replace(/_\d+$/g, '').toLowerCase();
 }
 
@@ -308,6 +372,7 @@ function dedupeModels(models) {
     const key = modelIdentity(model);
     if (!key || seen.has(key)) continue;
     seen.add(key);
+    model.name = cleanModelName(model);
     result.push(model);
   }
   return result;
@@ -371,34 +436,235 @@ function setupPackageLoading(loader) {
   });
 }
 
-function applyRenderSettings() {
-  const settings = state.renderSettings;
-  if (state.ambientLight) state.ambientLight.intensity = settings.ambient;
-  if (state.keyLight) state.keyLight.intensity = settings.key;
-  if (state.rimLight) state.rimLight.intensity = settings.rim;
-  if (state.renderer) {
-    state.renderer.toneMappingExposure = settings.exposure;
-    state.renderer.domElement.style.filter = `saturate(${settings.saturation}) contrast(${settings.contrast})`;
+const RENDER_SETTINGS_STORAGE_KEY = 'qwenpaw-mmd-render-settings/v2';
+
+function mergeRenderSettings(saved) {
+  if (!saved || typeof saved !== 'object') return;
+  if (saved.global && typeof saved.global === 'object') {
+    Object.assign(state.renderSettings.global, saved.global);
   }
-  if (state.mesh) {
-    state.mesh.traverse((child) => {
-      if (!child.isSkinnedMesh) return;
-      const materials = Array.isArray(child.material) ? child.material : [child.material];
-      for (const mat of materials) {
-        if (!mat?.userData?.outlineParameters) continue;
-        mat.userData.outlineParameters.thickness = settings.outline;
-      }
+  if (saved.avatar && typeof saved.avatar === 'object') {
+    Object.assign(state.renderSettings.global, {
+      outline: saved.avatar.outline ?? state.renderSettings.global.outline,
+      brightness: saved.avatar.brightness ?? state.renderSettings.global.brightness,
+      saturation: saved.avatar.saturation ?? state.renderSettings.global.saturation,
+      contrast: saved.avatar.contrast ?? state.renderSettings.global.contrast,
     });
-    updateOutlineVisibility();
+  }
+}
+
+function loadSavedRenderSettings() {
+  try {
+    mergeRenderSettings(JSON.parse(localStorage.getItem(RENDER_SETTINGS_STORAGE_KEY) || 'null'));
+  } catch (error) {
+    log(`读取渲染方案失败：${error.message}`);
+  }
+}
+
+function saveRenderSettings() {
+  localStorage.setItem(RENDER_SETTINGS_STORAGE_KEY, JSON.stringify(state.renderSettings));
+  log('渲染方案已保存。');
+}
+
+function applyRenderSettings() {
+  const global = state.renderSettings.global;
+  if (state.ambientLight) state.ambientLight.intensity = global.ambient;
+  if (state.keyLight) state.keyLight.intensity = global.key;
+  if (state.rimLight) state.rimLight.intensity = global.rim;
+  if (state.renderer) {
+    state.renderer.toneMappingExposure = global.exposure;
+    state.renderer.domElement.style.filter = `brightness(${global.brightness}) saturate(${global.saturation}) contrast(${global.contrast})`;
+  }
+  applyObjectRenderSettings(state.mesh, state.renderSettings.global, state.materialBaseStates);
+  applyObjectRenderSettings(state.sceneModel, state.renderSettings.global, state.sceneMaterialBaseStates);
+  updateOutlineVisibility();
+}
+
+function applyObjectRenderSettings(root, settings, baseStates) {
+  if (!root) return;
+  root.traverse((child) => {
+    const materials = Array.isArray(child.material) ? child.material : [child.material];
+    for (const mat of materials) {
+      if (!mat) continue;
+      const base = baseStates.get(mat.uuid);
+      restoreRenderBaseColor(mat, base);
+      if (mat.userData?.outlineParameters) {
+        mat.userData.outlineParameters.thickness = outlineThicknessForMaterial(mat, settings.outline);
+        mat.userData.outlineParameters.alpha = outlineAlphaForMaterial(mat, mat.userData.outlineParameters.alpha ?? mat.opacity);
+        mat.userData.outlineParameters.visible = shouldShowOutline(mat, settings.outline);
+      }
+      syncMmdMaterialUniforms(mat);
+      mat.needsUpdate = true;
+    }
+  });
+}
+
+function restoreRenderBaseColor(mat, base) {
+  if (mat.color && base?.color) mat.color.copy(base.color);
+  if (mat.emissive && base?.emissive) mat.emissive.copy(base.emissive);
+  if (mat.userData?.renderOriginalMap) mat.map = mat.userData.renderOriginalMap;
+}
+
+function applyColorAdjustment(mat, base, settings) {
+  if (mat.color && base?.color) {
+    mat.color.copy(adjustColor(base.color, settings));
+  }
+  if (mat.emissive && base?.emissive) {
+    mat.emissive.copy(adjustColor(base.emissive, settings));
+  }
+  if (mat.map?.image) {
+    applyTextureAdjustment(mat, settings);
+  }
+}
+
+function adjustColor(color, settings) {
+  const adjusted = color.clone();
+  const gray = adjusted.r * 0.2126 + adjusted.g * 0.7152 + adjusted.b * 0.0722;
+  adjusted.r = gray + (adjusted.r - gray) * settings.saturation;
+  adjusted.g = gray + (adjusted.g - gray) * settings.saturation;
+  adjusted.b = gray + (adjusted.b - gray) * settings.saturation;
+  adjusted.r = 0.5 + (adjusted.r - 0.5) * settings.contrast;
+  adjusted.g = 0.5 + (adjusted.g - 0.5) * settings.contrast;
+  adjusted.b = 0.5 + (adjusted.b - 0.5) * settings.contrast;
+  adjusted.multiplyScalar(settings.brightness);
+  adjusted.r = THREE.MathUtils.clamp(adjusted.r, 0, 1);
+  adjusted.g = THREE.MathUtils.clamp(adjusted.g, 0, 1);
+  adjusted.b = THREE.MathUtils.clamp(adjusted.b, 0, 1);
+  return adjusted;
+}
+
+function applyTextureAdjustment(mat, settings) {
+  const sourceTexture = mat.userData.renderOriginalMap || mat.map;
+  const original = getOriginalTextureCanvas(sourceTexture);
+  if (!original) return;
+  const canvas = mat.userData.renderAdjustedCanvas || document.createElement('canvas');
+  if (canvas.width !== original.width || canvas.height !== original.height) {
+    canvas.width = original.width;
+    canvas.height = original.height;
+  }
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(original, 0, 0);
+  const image = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const data = image.data;
+  for (let i = 0; i < data.length; i += 4) {
+    let r = data[i] / 255;
+    let g = data[i + 1] / 255;
+    let b = data[i + 2] / 255;
+    const gray = r * 0.2126 + g * 0.7152 + b * 0.0722;
+    r = gray + (r - gray) * settings.saturation;
+    g = gray + (g - gray) * settings.saturation;
+    b = gray + (b - gray) * settings.saturation;
+    r = 0.5 + (r - 0.5) * settings.contrast;
+    g = 0.5 + (g - 0.5) * settings.contrast;
+    b = 0.5 + (b - 0.5) * settings.contrast;
+    r = THREE.MathUtils.clamp(r * settings.brightness, 0, 1);
+    g = THREE.MathUtils.clamp(g * settings.brightness, 0, 1);
+    b = THREE.MathUtils.clamp(b * settings.brightness, 0, 1);
+    data[i] = Math.round(r * 255);
+    data[i + 1] = Math.round(g * 255);
+    data[i + 2] = Math.round(b * 255);
+  }
+  ctx.putImageData(image, 0, 0);
+  if (!mat.userData.renderAdjustedMap) {
+    mat.userData.renderOriginalMap = mat.map;
+    mat.userData.renderAdjustedCanvas = canvas;
+    mat.userData.renderAdjustedMap = new THREE.CanvasTexture(canvas);
+    mat.userData.renderAdjustedMap.flipY = mat.map.flipY;
+    mat.userData.renderAdjustedMap.wrapS = mat.map.wrapS;
+    mat.userData.renderAdjustedMap.wrapT = mat.map.wrapT;
+    mat.userData.renderAdjustedMap.colorSpace = mat.map.colorSpace;
+    mat.userData.renderAdjustedMap.repeat.copy(mat.map.repeat);
+    mat.userData.renderAdjustedMap.offset.copy(mat.map.offset);
+    mat.userData.renderAdjustedMap.rotation = mat.map.rotation;
+    mat.userData.renderAdjustedMap.center.copy(mat.map.center);
+    mat.map = mat.userData.renderAdjustedMap;
+  } else {
+    mat.userData.renderAdjustedMap.needsUpdate = true;
+  }
+}
+
+function getOriginalTextureCanvas(texture) {
+  const source = texture.userData.renderOriginalCanvas || texture.image;
+  if (!source?.width || !source?.height) return null;
+  if (texture.userData.renderOriginalCanvas) return texture.userData.renderOriginalCanvas;
+  try {
+    const canvas = document.createElement('canvas');
+    canvas.width = source.naturalWidth || source.videoWidth || source.width;
+    canvas.height = source.naturalHeight || source.videoHeight || source.height;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(source, 0, 0, canvas.width, canvas.height);
+    texture.userData.renderOriginalCanvas = canvas;
+    return canvas;
+  } catch (error) {
+    log(`贴图调色失败：${error.message}`);
+    return null;
   }
 }
 
 function setRenderSetting(name, value) {
-  if (!(name in state.renderSettings)) return;
-  state.renderSettings[name] = value;
+  if (!(name in state.renderSettings.global)) return;
+  state.renderSettings.global[name] = value;
   const control = renderControls[name];
   if (control?.label) control.label.textContent = value.toFixed(control.digits);
   applyRenderSettings();
+}
+
+function addChatBubble(role, text) {
+  if (!chatHistory || !text) return;
+  const empty = document.querySelector('#chatEmpty');
+  if (empty) empty.remove();
+  const row = document.createElement('div');
+  row.className = `chat-bubble ${role}`;
+  row.textContent = text;
+  chatHistory.appendChild(row);
+  while (chatHistory.children.length > 10) {
+    chatHistory.removeChild(chatHistory.firstChild);
+  }
+  chatHistory.scrollTop = chatHistory.scrollHeight;
+}
+
+async function sendChatMessage() {
+  const text = chatInput.value.trim();
+  if (!text) return;
+  chatInput.value = '';
+  sendChatBtn.disabled = true;
+  chatStatus.textContent = '已发送，等待 QwenPaw 回复...';
+  addChatBubble('user', text);
+  log(`我：${text}`);
+  try {
+    const response = await fetch(`${bridgeBaseUrl}/api/qwenpaw/message`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+    });
+    const data = await response.json();
+    if (!data.ok) throw new Error(data.error || `HTTP ${response.status}`);
+    const reply = data.response?.text || data.response?.message || JSON.stringify(data.response);
+    if (reply) {
+      addChatBubble('assistant', reply);
+      log(`QwenPaw：${reply}`);
+      chatStatus.textContent = '已收到 QwenPaw 回复';
+    } else {
+      chatStatus.textContent = 'QwenPaw 已响应，但没有返回可显示文本';
+    }
+  } catch (error) {
+    addChatBubble('error', `发送失败：${error.message}`);
+    chatStatus.textContent = '发送失败';
+    log(`发送到 QwenPaw 失败：${error.message}`);
+  } finally {
+    sendChatBtn.disabled = false;
+    chatInput.focus();
+  }
+}
+
+function syncRenderControls() {
+  for (const [name, control] of Object.entries(renderControls)) {
+    if (!control.input) continue;
+    const value = state.renderSettings.global[name];
+    control.input.value = String(value);
+    if (control.label) control.label.textContent = value.toFixed(control.digits);
+  }
 }
 
 function initScene() {
@@ -406,10 +672,15 @@ function initScene() {
   state.scene = new THREE.Scene();
   state.scene.background = new THREE.Color(0x080a0f);
 
-  state.camera = new THREE.PerspectiveCamera(38, viewer.clientWidth / viewer.clientHeight, 0.1, 2000);
+  state.camera = new THREE.PerspectiveCamera(38, viewer.clientWidth / viewer.clientHeight, 0.05, 500);
   state.camera.position.set(0, 5, 15);
 
-  state.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'high-performance' });
+  state.renderer = new THREE.WebGLRenderer({
+    antialias: true,
+    alpha: true,
+    powerPreference: 'high-performance',
+    logarithmicDepthBuffer: true,
+  });
   state.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   state.renderer.setSize(viewer.clientWidth, viewer.clientHeight);
   state.renderer.shadowMap.enabled = true;
@@ -433,15 +704,15 @@ function initScene() {
   state.renderer.domElement.addEventListener('wheel', handleSmoothWheelZoom, { passive: false });
   state.controls.update();
 
-  state.ambientLight = new THREE.AmbientLight(0xffffff, state.renderSettings.ambient);
+  state.ambientLight = new THREE.AmbientLight(0xffffff, state.renderSettings.global.ambient);
   state.scene.add(state.ambientLight);
 
-  state.keyLight = new THREE.DirectionalLight(0xffffff, state.renderSettings.key);
+  state.keyLight = new THREE.DirectionalLight(0xffffff, state.renderSettings.global.key);
   state.keyLight.position.set(8, 14, 10);
   state.keyLight.castShadow = true;
   state.scene.add(state.keyLight);
 
-  state.rimLight = new THREE.DirectionalLight(0x8fd7ff, state.renderSettings.rim);
+  state.rimLight = new THREE.DirectionalLight(0x8fd7ff, state.renderSettings.global.rim);
   state.rimLight.position.set(-8, 10, -12);
   state.scene.add(state.rimLight);
   applyRenderSettings();
@@ -462,18 +733,49 @@ function initScene() {
 }
 
 async function loadModel(path) {
-  await loadModelFromUrl(assetUrl(path), path, resourceBase(path), { serverPath: path });
+  await loadModelFromUrl(assetUrl(path), cleanModelName({ path }), resourceBase(path), { serverPath: path });
 }
 
 async function rememberLastModel(path, name, vmds = state.packageVmds.map((item) => item.path)) {
+  const item = { path, name: cleanModelName({ path, name }), vmds: vmds || [] };
   try {
-    await fetch(`${bridgeBaseUrl}/api/runtime/last-model`, {
+    localStorage.setItem(LAST_MODEL_STORAGE_KEY, JSON.stringify(item));
+  } catch {
+    // Browser storage can be unavailable in some embedded contexts.
+  }
+  try {
+    const response = await fetch(`${bridgeBaseUrl}/api/runtime/last-model`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ path, name, vmds }),
+      body: JSON.stringify(item),
     });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
   } catch (error) {
     log(`保存最近模型失败：${error.message}`);
+  }
+}
+
+async function rememberSceneModel(path, name) {
+  try {
+    await fetch(`${bridgeBaseUrl}/api/runtime/scene-model`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path, name }),
+    });
+  } catch (error) {
+    log(`保存场景模型失败：${error.message}`);
+  }
+}
+
+async function rememberVmd(path, name) {
+  try {
+    await fetch(`${bridgeBaseUrl}/api/runtime/vmds`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path, name }),
+    });
+  } catch (error) {
+    log(`保存 VMD 失败：${error.message}`);
   }
 }
 
@@ -481,13 +783,34 @@ async function restoreLastModel() {
   try {
     const response = await fetch(`${bridgeBaseUrl}/api/runtime/last-model`);
     const data = await response.json();
+    let scenePath = '';
+    try {
+      const sceneResponse = await fetch(`${bridgeBaseUrl}/api/runtime/scene-model`);
+      if (sceneResponse.ok) {
+        const sceneData = await sceneResponse.json();
+        scenePath = sceneData.scene_model?.path || '';
+      }
+    } catch {
+      scenePath = '';
+    }
+    let localLast = null;
+    try {
+      localLast = JSON.parse(localStorage.getItem(LAST_MODEL_STORAGE_KEY) || 'null');
+    } catch {
+      localLast = null;
+    }
     let models = data.models?.length ? data.models : (data.last_model ? [data.last_model] : []);
+    if (localLast?.path && !models.some((model) => model.path === localLast.path)) {
+      models.unshift(localLast);
+    }
+    models = models.filter((model) => model?.path && model.path !== scenePath);
     if (models.length < 2) {
       try {
         const modelResponse = await fetch(`${bridgeBaseUrl}/api/models`);
         const importedModels = await modelResponse.json();
         const existing = new Set(models.map((model) => modelIdentity(model)));
         for (const model of importedModels || []) {
+          if (model.path === scenePath) continue;
           const key = modelIdentity(model);
           if (!existing.has(key)) {
             existing.add(key);
@@ -509,15 +832,70 @@ async function restoreLastModel() {
       }));
       updatePackageSelects();
     }
-    const last = data.last_model || models[0];
-    if (!last?.path) return;
-    state.packageVmds = (last.vmds || []).map((path) => ({ path, url: assetUrl(path), serverPath: path }));
-    updatePackageSelects();
-    packageModelSelect.value = last.path;
-    log(`自动恢复最近模型：${last.name || last.path}`);
-    await loadModel(last.path);
+    const preferred = models.find((model) => model.path === data.last_model?.path)
+      || models.find((model) => model.path === localLast?.path);
+    const ordered = preferred ? [preferred, ...models.filter((model) => model.path !== preferred.path)] : models;
+    for (const model of ordered) {
+      if (!model?.path) continue;
+      try {
+        state.packageVmds = (model.vmds || []).map((path) => ({ path, url: assetUrl(path), serverPath: path }));
+        updatePackageSelects();
+        packageModelSelect.value = model.path;
+        log(`自动恢复最近模型：${model.name || model.path}`);
+        await loadModel(model.path);
+        return;
+      } catch (error) {
+        log(`恢复模型失败，尝试下一个：${model.name || model.path}，${error.message}`);
+      }
+    }
   } catch (error) {
     log(`自动恢复最近模型失败：${error.message}`);
+  }
+}
+
+async function restoreSceneModel() {
+  try {
+    const response = await fetch(`${bridgeBaseUrl}/api/runtime/scene-model`);
+    const data = await response.json();
+    state.sceneModels = (data.scene_models || []).map((model) => ({
+      path: model.path,
+      url: assetUrl(model.path),
+      serverPath: model.path,
+      name: cleanModelName(model),
+    }));
+    updatePackageSelects();
+    const sceneModel = data.scene_model;
+    if (!sceneModel?.path) return;
+    if (!state.sceneModels.some((model) => model.path === sceneModel.path)) {
+      state.sceneModels.unshift({
+        path: sceneModel.path,
+        url: assetUrl(sceneModel.path),
+        serverPath: sceneModel.path,
+        name: cleanModelName(sceneModel),
+      });
+      updatePackageSelects();
+    }
+    sceneModelSelect.value = sceneModel.path;
+    log(`自动恢复场景模型：${sceneModel.name || sceneModel.path}`);
+    await loadSceneModelFromUrl(assetUrl(sceneModel.path), sceneModel.name || sceneModel.path, resourceBase(sceneModel.path));
+  } catch (error) {
+    log(`自动恢复场景模型失败：${error.message}`);
+  }
+}
+
+async function restoreVmdHistory() {
+  try {
+    const response = await fetch(`${bridgeBaseUrl}/api/runtime/vmds`);
+    const data = await response.json();
+    state.packageVmds = (data.vmds || []).map((vmd) => ({
+      path: vmd.path,
+      url: assetUrl(vmd.path),
+      serverPath: vmd.path,
+      name: vmd.name || basename(vmd.path),
+    }));
+    updatePackageSelects();
+  } catch (error) {
+    log(`读取 VMD 历史失败：${error.message}`);
   }
 }
 
@@ -552,7 +930,53 @@ async function loadModelFromUrl(url, label, resourcePath = '', options = {}) {
   if (state.physics && (mmd.rigidBodies?.length || 0) === 0) {
     log('这个 PMX 没检测到刚体数据，所以不会有头发/裙摆等 MMD 物理。');
   }
-  if (options.serverPath) rememberLastModel(options.serverPath, label);
+  if (options.serverPath) await rememberLastModel(options.serverPath, label);
+}
+
+async function loadSceneModelFromUrl(url, label, resourcePath = '', options = {}) {
+  const loader = new MMDLoader();
+  if (resourcePath) loader.setResourcePath(resourcePath);
+  setupPackageLoading(loader);
+  setStatus(`正在加载场景模型：${label}`);
+
+  if (state.sceneModel) {
+    state.scene.remove(state.sceneModel);
+    state.sceneModel.traverse((child) => {
+      if (child.geometry) child.geometry.dispose?.();
+      const materials = Array.isArray(child.material) ? child.material : [child.material];
+      for (const mat of materials) mat?.dispose?.();
+    });
+    state.sceneModel = null;
+  }
+
+  const sceneModel = await loader.loadAsync(url);
+  if (options?.serverPath) sceneModel.userData.serverPath = options.serverPath;
+  applySceneModelStyle(sceneModel);
+  state.sceneModel = sceneModel;
+  state.scene.add(sceneModel);
+  applyRenderSettings();
+  setStatus(`场景模型已加载：${label}`);
+  const mmd = sceneModel.geometry?.userData?.MMD || {};
+  log(`场景模型加载完成：${label}，材质=${Array.isArray(sceneModel.material) ? sceneModel.material.length : 1}，刚体=${mmd.rigidBodies?.length || 0}。`);
+}
+
+function applySceneModelStyle(mesh) {
+  state.sceneMaterialBaseStates.clear();
+  mesh.traverse((child) => {
+    if (child.isMesh) {
+      child.castShadow = false;
+      child.receiveShadow = true;
+    }
+    const materials = Array.isArray(child.material) ? child.material : [child.material];
+    for (const mat of materials) {
+      if (!mat) continue;
+      mat.opacity = THREE.MathUtils.clamp(Number.isFinite(mat.opacity) ? mat.opacity : 1, 0, 1);
+      mat.transparent = mat.opacity < 0.99;
+      mat.depthWrite = mat.opacity >= 0.99;
+      mat.needsUpdate = true;
+      state.sceneMaterialBaseStates.set(mat.uuid, captureMaterialState(mat));
+    }
+  });
 }
 
 async function loadPmxMaterialMorphs(url, loader) {
@@ -948,6 +1372,15 @@ function setSoftProtection(enabled) {
   log(`软部件保护：${enabled ? '开' : '关'}`);
 }
 
+function setPmxCompatFixes(enabled) {
+  state.pmxCompatFixes = enabled;
+  if (state.mesh) {
+    applyModelStyle(state.mesh);
+    applyRenderSettings();
+  }
+  log(`PMX 兼容修复：${enabled ? '开' : '关'}`);
+}
+
 function rebuildCurrentHelper() {
   if (!state.mesh || !state.helper) {
     syncHelperFlags();
@@ -963,6 +1396,7 @@ function rebuildCurrentHelper() {
 
 function applyModelStyle(mesh) {
   state.materialBaseStates.clear();
+  const compatFixed = [];
   mesh.traverse((child) => {
     if (child.isMesh) {
       child.castShadow = true;
@@ -976,11 +1410,13 @@ function applyModelStyle(mesh) {
         mat.visible = mat.opacity > 0.01;
         mat.transparent = mat.opacity < 0.99;
         mat.depthWrite = mat.opacity >= 0.99;
+        applyPmxMaterialCompatibility(mat);
+        if (mat.userData.qwenpawHairOutlineFix) compatFixed.push(mat.name || 'material');
         mat.userData.outlineParameters = {
-          thickness: state.renderSettings.outline,
+          thickness: outlineThicknessForMaterial(mat, state.renderSettings.global.outline),
           color: [0, 0, 0],
-          alpha: mat.opacity,
-          visible: !isMaterialHidden(mat),
+          alpha: outlineAlphaForMaterial(mat, mat.opacity),
+          visible: shouldShowOutline(mat),
         };
         syncMmdMaterialUniforms(mat);
         state.materialBaseStates.set(mat.uuid, captureMaterialState(mat));
@@ -1010,6 +1446,26 @@ function isMaterialHidden(mat) {
   return opacity <= 0.01;
 }
 
+function shouldShowOutline(mat, outline = state.renderSettings.global.outline) {
+  return outline >= OUTLINE_VISIBLE_THRESHOLD
+    && !isMaterialHidden(mat);
+}
+
+function outlineThicknessForMaterial(mat, outline) {
+  if (outline < OUTLINE_VISIBLE_THRESHOLD) return 0;
+  if (mat?.userData?.qwenpawHairOutlineFix) {
+    return outline * 0.35;
+  }
+  return outline;
+}
+
+function outlineAlphaForMaterial(mat, alpha) {
+  if (mat?.userData?.qwenpawHairOutlineFix) {
+    return Math.min(alpha ?? 1, 0.5);
+  }
+  return alpha;
+}
+
 function updateOutlineVisibility() {
   if (!state.mesh) return;
   state.mesh.traverse((child) => {
@@ -1017,7 +1473,9 @@ function updateOutlineVisibility() {
     const materials = Array.isArray(child.material) ? child.material : [child.material];
     for (const mat of materials) {
       if (!mat?.userData?.outlineParameters) continue;
-      mat.userData.outlineParameters.visible = !isMaterialHidden(mat);
+      mat.userData.outlineParameters.visible = shouldShowOutline(mat);
+      mat.userData.outlineParameters.thickness = outlineThicknessForMaterial(mat, state.renderSettings.global.outline);
+      mat.userData.outlineParameters.alpha = outlineAlphaForMaterial(mat, mat.userData.outlineParameters.alpha ?? mat.opacity);
     }
   });
 }
@@ -1071,8 +1529,8 @@ function frameModel(mesh) {
   state.controls.maxDistance = state.cameraMaxDistance;
   state.controls.target.copy(target);
   state.camera.position.set(center.x, center.y + radius * 0.05, center.z + radius * 1.05);
-  state.camera.near = Math.max(radius / 10000, 0.001);
-  state.camera.far = Math.max(radius * 30, 2000);
+  state.camera.near = Math.max(radius / 80, 0.03);
+  state.camera.far = Math.max(radius * 12, 80);
   state.camera.updateProjectionMatrix();
   state.controls.update();
   clampCameraDistance();
@@ -1133,6 +1591,7 @@ function configureOneShotAnimation() {
     resetModelToRest({ readdHelper: true });
     log('VMD 播放结束。');
   });
+  if (compatFixed.length) log(`PMX兼容修复：已降低这些材质的描边闪烁：${[...new Set(compatFixed)].join(', ')}`);
 }
 
 function resetExpressions() {
@@ -1188,8 +1647,9 @@ function applyMaterialMorph(control, weight) {
   mat.visible = mat.opacity > 0.01;
   mat.needsUpdate = true;
   if (!mat.userData.outlineParameters) mat.userData.outlineParameters = {};
-  mat.userData.outlineParameters.alpha = mat.opacity;
-  mat.userData.outlineParameters.visible = mat.opacity > 0.01;
+  mat.userData.outlineParameters.alpha = outlineAlphaForMaterial(mat, mat.opacity);
+  mat.userData.outlineParameters.visible = shouldShowOutline(mat);
+  mat.userData.outlineParameters.thickness = outlineThicknessForMaterial(mat, mat.userData.outlineParameters.thickness ?? state.renderSettings.global.outline);
 }
 
 function applyPmxMaterialMorph(control, weight) {
@@ -1257,10 +1717,12 @@ function recomputePmxMaterialMorphs() {
     mat.transparent = mat.opacity < 0.99;
     mat.depthWrite = mat.opacity >= 0.99;
     if (!mat.userData.outlineParameters) mat.userData.outlineParameters = {};
-    mat.userData.outlineParameters.alpha = Math.min(mat.userData.outlineParameters.alpha ?? mat.opacity, mat.opacity);
-    mat.userData.outlineParameters.visible = mat.visible && (mat.userData.outlineParameters.alpha ?? 1) > 0.01;
+    mat.userData.outlineParameters.alpha = outlineAlphaForMaterial(mat, Math.min(mat.userData.outlineParameters.alpha ?? mat.opacity, mat.opacity));
+    mat.userData.outlineParameters.visible = shouldShowOutline(mat) && mat.visible && (mat.userData.outlineParameters.alpha ?? 1) > 0.01;
+    mat.userData.outlineParameters.thickness = outlineThicknessForMaterial(mat, mat.userData.outlineParameters.thickness ?? state.renderSettings.global.outline);
     syncMmdMaterialUniforms(mat);
   }
+  applyObjectRenderSettings(state.mesh, state.renderSettings.global, state.materialBaseStates);
 }
 
 function applyPmxMaterialOp(op, weight) {
@@ -1274,8 +1736,10 @@ function applyPmxMaterialOp(op, weight) {
     if (mat.shininess !== undefined) mat.shininess = applyScalarOp(base?.shininess ?? mat.shininess, mat.shininess, op.shininess, op.opType, weight);
     if (!mat.userData.outlineParameters) mat.userData.outlineParameters = {};
     const baseOutline = base?.outline || {};
-    mat.userData.outlineParameters.alpha = applyScalarOp(baseOutline.alpha ?? mat.opacity, mat.userData.outlineParameters.alpha ?? mat.opacity, op.edgeColor?.[3], op.opType, weight);
-    mat.userData.outlineParameters.thickness = applyScalarOp(baseOutline.thickness ?? 0.004, mat.userData.outlineParameters.thickness ?? 0.004, op.edgeSize, op.opType, weight);
+    const nextAlpha = applyScalarOp(baseOutline.alpha ?? mat.opacity, mat.userData.outlineParameters.alpha ?? mat.opacity, op.edgeColor?.[3], op.opType, weight);
+    const nextThickness = applyScalarOp(baseOutline.thickness ?? 0.004, mat.userData.outlineParameters.thickness ?? 0.004, op.edgeSize, op.opType, weight);
+    mat.userData.outlineParameters.alpha = outlineAlphaForMaterial(mat, nextAlpha);
+    mat.userData.outlineParameters.thickness = outlineThicknessForMaterial(mat, nextThickness);
 }
 
 function syncMmdMaterialUniforms(mat) {
@@ -1288,6 +1752,7 @@ function syncMmdMaterialUniforms(mat) {
   if (uniforms.emissive && mat.emissive) uniforms.emissive.value.copy(mat.emissive);
   if (uniforms.specular && mat.specular) uniforms.specular.value.copy(mat.specular);
   if (uniforms.shininess && mat.shininess !== undefined) uniforms.shininess.value = Math.max(mat.shininess, 1e-4);
+  if (uniforms.reflectivity && mat.reflectivity !== undefined) uniforms.reflectivity.value = mat.reflectivity;
 }
 
 function logPmxMaterialMorphResult(name, ops, weight) {
@@ -1495,6 +1960,7 @@ async function loadPackage(file) {
     path,
     url: assetUrl(path),
     serverPath: path,
+    name: basename(path).replace(/\.vmd$/i, ''),
   }));
   updatePackageSelects();
   log(`模型包已导入：${data.name}，PMX=1，VMD=${state.packageVmds.length}`);
@@ -1503,6 +1969,50 @@ async function loadPackage(file) {
   packageModelSelect.value = pmx.path;
   await rememberLastModel(pmx.path, data.name, state.packageVmds.map((item) => item.path));
   await loadSelectedPackageModel();
+}
+
+async function loadScenePackage(file) {
+  setStatus(`正在导入场景 ZIP：${file.name}`);
+  log(`正在导入场景模型包：${file.name}`);
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('remember', '0');
+  const response = await fetch(`${bridgeBaseUrl}/api/models/upload`, {
+    method: 'POST',
+    body: formData,
+  });
+  const data = await response.json();
+  if (!data.ok) {
+    throw new Error(data.error || '场景导入失败');
+  }
+  await loadSceneModelFromUrl(assetUrl(data.path), data.name || data.path, resourceBase(data.path), { serverPath: data.path });
+  await rememberSceneModel(data.path, data.name || data.path);
+  state.sceneModels = dedupeModels([{ path: data.path, url: assetUrl(data.path), serverPath: data.path, name: data.name }, ...state.sceneModels]);
+  updatePackageSelects();
+  sceneModelSelect.value = data.path;
+}
+
+async function importVmdFile(file) {
+  setStatus(`正在导入 VMD：${file.name}`);
+  const formData = new FormData();
+  formData.append('file', file);
+  const response = await fetch(`${bridgeBaseUrl}/api/vmds/upload`, {
+    method: 'POST',
+    body: formData,
+  });
+  const data = await response.json();
+  if (!data.ok) throw new Error(data.error || 'VMD 导入失败');
+  const vmd = {
+    path: data.vmd.path,
+    url: assetUrl(data.vmd.path),
+    serverPath: data.vmd.path,
+    name: data.vmd.name || basename(data.vmd.path),
+  };
+  state.packageVmds = [vmd, ...state.packageVmds.filter((item) => item.path !== vmd.path)];
+  updatePackageSelects();
+  packageVmdSelect.value = vmd.path;
+  setStatus('VMD 已导入。');
+  log(`VMD 已导入：${vmd.name}`);
 }
 
 function updatePackageSelects() {
@@ -1516,14 +2026,38 @@ function updatePackageSelects() {
     packageModelSelect.appendChild(option);
   }
 
+  sceneModelSelect.innerHTML = state.sceneModels.length
+    ? ''
+    : '<option value="">还没有导入场景</option>';
+  for (const sceneModel of state.sceneModels) {
+    const option = document.createElement('option');
+    option.value = sceneModel.path;
+    option.textContent = sceneModel.name || sceneModel.path;
+    sceneModelSelect.appendChild(option);
+  }
+
   packageVmdSelect.innerHTML = state.packageVmds.length
     ? ''
-    : '<option value="">压缩包里没有 VMD</option>';
+    : '<option value="">还没有导入 VMD</option>';
   for (const vmd of state.packageVmds) {
     const option = document.createElement('option');
     option.value = vmd.path;
-    option.textContent = vmd.path;
+    option.textContent = vmd.name || basename(vmd.path);
     packageVmdSelect.appendChild(option);
+  }
+}
+
+function removeMissingModel(path) {
+  const before = state.packagePmxx.length;
+  state.packagePmxx = state.packagePmxx.filter((item) => item.path !== path && item.serverPath !== path);
+  if (state.packagePmxx.length !== before) {
+    updatePackageSelects();
+  }
+  try {
+    const saved = JSON.parse(localStorage.getItem(LAST_MODEL_STORAGE_KEY) || 'null');
+    if (saved?.path === path) localStorage.removeItem(LAST_MODEL_STORAGE_KEY);
+  } catch {
+    // Ignore malformed local storage.
   }
 }
 
@@ -1531,12 +2065,23 @@ async function loadSelectedPackageModel() {
   const path = packageModelSelect.value;
   if (!path) return;
   const file = state.packagePmxx.find((item) => item.path === path) || state.packageFiles.get(path);
-  if (!file) return;
+  if (!file) {
+    log(`模型记录已失效：${path}`);
+    removeMissingModel(path);
+    setStatus('模型记录已失效，请重新导入 ZIP。');
+    return;
+  }
   if (file.serverPath) {
     state.packageVmds = (file.vmds || []).map((vmdPath) => ({ path: vmdPath, url: assetUrl(vmdPath), serverPath: vmdPath }));
     updatePackageSelects();
     packageModelSelect.value = file.serverPath;
-    await loadModel(file.serverPath);
+    try {
+      await loadModel(file.serverPath);
+    } catch (error) {
+      removeMissingModel(file.serverPath);
+      setStatus('模型文件不存在，请重新导入 ZIP。');
+      throw error;
+    }
   } else {
     await loadModelFromUrl(virtualUrl(file.path), path, virtualBase(file.path));
   }
@@ -1549,9 +2094,95 @@ async function playSelectedPackageVmd() {
   if (!file) return;
   if (file.serverPath) {
     await playVmd(file.serverPath);
+    await rememberVmd(file.serverPath, file.name || basename(file.serverPath));
   } else {
     await playVmdFromUrl(virtualUrl(file.path), path);
   }
+}
+
+async function loadSelectedSceneModel() {
+  const path = sceneModelSelect.value;
+  if (!path) return;
+  const file = state.sceneModels.find((item) => item.path === path);
+  if (!file) return;
+  await loadSceneModelFromUrl(assetUrl(file.serverPath || file.path), file.name || file.path, resourceBase(file.serverPath || file.path), { serverPath: file.serverPath || file.path });
+  await rememberSceneModel(file.serverPath || file.path, file.name || file.path);
+}
+
+async function deleteRuntimeResource(kind, path) {
+  if (!path) return;
+  const endpoint = kind === 'model'
+    ? '/api/runtime/last-model'
+    : kind === 'scene'
+      ? '/api/runtime/scene-model'
+      : '/api/runtime/vmds';
+  await fetch(`${bridgeBaseUrl}${endpoint}`, {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path }),
+  });
+}
+
+function isHairLikeMaterial(mat) {
+  const name = `${mat?.name || ''} ${mat?.userData?.Name || ''}`.toLowerCase();
+  return /髪|hair|头发|頭髮|发|髮/.test(name);
+}
+
+function applyPmxMaterialCompatibility(mat) {
+  if (!state.pmxCompatFixes || !mat) return;
+  const hairLike = isHairLikeMaterial(mat);
+  const riskyTransparent = mat.transparent || (Number.isFinite(mat.opacity) && mat.opacity < 0.99);
+  if (hairLike) {
+    mat.userData.qwenpawOriginalEnvMap ??= mat.envMap || null;
+    mat.userData.qwenpawOriginalMatcap ??= mat.matcap || null;
+    mat.userData.qwenpawOriginalCombine ??= mat.combine;
+    mat.userData.qwenpawOriginalMatcapCombine ??= mat.matcapCombine;
+    mat.userData.qwenpawOriginalReflectivity ??= mat.reflectivity;
+    mat.envMap = null;
+    mat.matcap = null;
+    mat.matcapCombine = THREE.MultiplyOperation;
+    mat.reflectivity = 0;
+    if (mat.specular) mat.specular.multiplyScalar(0.25);
+    if (mat.shininess !== undefined) mat.shininess = Math.min(mat.shininess || 0, 12);
+    mat.polygonOffset = true;
+    mat.polygonOffsetFactor = 1;
+    mat.polygonOffsetUnits = 1;
+    mat.depthWrite = true;
+    mat.transparent = false;
+    mat.userData.qwenpawHairOutlineFix = true;
+  } else if (riskyTransparent) {
+    mat.depthWrite = false;
+  }
+}
+
+async function deleteSelectedModel() {
+  const path = packageModelSelect.value;
+  if (!path) return;
+  await deleteRuntimeResource('model', path);
+  removeMissingModel(path);
+  setStatus('人物模型记录已删除。');
+}
+
+async function deleteSelectedSceneModel() {
+  const path = sceneModelSelect.value;
+  if (!path) return;
+  await deleteRuntimeResource('scene', path);
+  state.sceneModels = state.sceneModels.filter((item) => item.path !== path && item.serverPath !== path);
+  if (state.sceneModel?.userData?.serverPath === path) {
+    state.scene.remove(state.sceneModel);
+    state.sceneModel = null;
+  }
+  updatePackageSelects();
+  setStatus('场景模型记录已删除。');
+}
+
+async function deleteSelectedVmd() {
+  const path = packageVmdSelect.value;
+  if (!path) return;
+  await deleteRuntimeResource('vmd', path);
+  state.packageVmds = state.packageVmds.filter((item) => item.path !== path && item.serverPath !== path);
+  updatePackageSelects();
+  setStatus('VMD 记录已删除。');
 }
 
 function bindUI() {
@@ -1573,9 +2204,7 @@ function bindUI() {
         await loadModelFromUrl(virtualUrl(path), file.name, virtualBase(path));
       }
       else if (lower.endsWith('.vmd')) {
-        const path = `__local_vmd__/${file.name}`;
-        state.packageFiles.set(path, { path, url: fileUrl(file), blob: file });
-        await playVmdFromUrl(virtualUrl(path), file.name);
+        await importVmdFile(file);
       }
       else log(`不支持这个文件：${file.name}`);
     } catch (error) {
@@ -1598,13 +2227,12 @@ function bindUI() {
     const file = event.target.files?.[0];
     if (!file) return;
     try {
-      revokeObjectUrls();
-      state.packageFiles.clear();
-      const path = `__local__/${file.name}`;
-      state.packageFiles.set(path, { path, url: fileUrl(file), blob: file });
-      await loadModelFromUrl(virtualUrl(path), file.name, virtualBase(path));
+      await loadScenePackage(file);
     } catch (error) {
-      log(`PMX 加载失败：${error.message}`);
+      setStatus('场景模型加载失败。');
+      log(`场景模型加载失败：${error.message}`);
+    } finally {
+      pmxInput.value = '';
     }
   });
 
@@ -1612,40 +2240,79 @@ function bindUI() {
     const file = event.target.files?.[0];
     if (!file) return;
     try {
-      const path = `__local_vmd__/${file.name}`;
-      state.packageFiles.set(path, { path, url: fileUrl(file), blob: file });
-      await playVmdFromUrl(virtualUrl(path), file.name);
+      await importVmdFile(file);
     } catch (error) {
-      log(`VMD 播放失败：${error.message}`);
+      log(`VMD 导入失败：${error.message}`);
+    } finally {
+      vmdInput.value = '';
     }
   });
 
   document.querySelector('#loadPackageModelBtn').addEventListener('click', () => {
     loadSelectedPackageModel().catch((error) => log(`PMX 加载失败：${error.message}`));
   });
+  deleteModelBtn.addEventListener('click', () => {
+    deleteSelectedModel().catch((error) => log(`删除人物模型失败：${error.message}`));
+  });
+  loadSceneModelBtn.addEventListener('click', () => {
+    loadSelectedSceneModel().catch((error) => log(`场景加载失败：${error.message}`));
+  });
+  deleteSceneModelBtn.addEventListener('click', () => {
+    deleteSelectedSceneModel().catch((error) => log(`删除场景失败：${error.message}`));
+  });
   document.querySelector('#playPackageVmdBtn').addEventListener('click', () => {
     playSelectedPackageVmd().catch((error) => log(`VMD 播放失败：${error.message}`));
+  });
+  deleteVmdBtn.addEventListener('click', () => {
+    deleteSelectedVmd().catch((error) => log(`删除 VMD 失败：${error.message}`));
+  });
+  hudCollapseBtn.addEventListener('click', () => {
+    app.classList.toggle('hud-collapsed');
+    hudCollapseBtn.textContent = app.classList.contains('hud-collapsed') ? '展开面板' : '折叠面板';
   });
   physicsToggle.addEventListener('change', () => setPhysics(physicsToggle.checked));
   ikToggle.addEventListener('change', () => setIK(ikToggle.checked));
   softToggle.addEventListener('change', () => setSoftProtection(softToggle.checked));
+  pmxCompatToggle.addEventListener('change', () => setPmxCompatFixes(pmxCompatToggle.checked));
   resetPhysicsBtn.addEventListener('click', resetPhysics);
-  rigidBodyDebugBtn.addEventListener('click', toggleRigidBodies);
-  physicsInspectBtn.addEventListener('click', inspectPhysics);
   expressionSelect.addEventListener('change', applySelectedExpression);
   expressionWeight.addEventListener('input', applySelectedExpression);
+  chatDockToggle.addEventListener('click', () => {
+    chatDock.classList.toggle('collapsed');
+  });
+  sendChatBtn.addEventListener('click', () => {
+    sendChatMessage().catch((error) => log(`发送失败：${error.message}`));
+  });
+  chatInput.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault();
+      sendChatMessage().catch((error) => log(`发送失败：${error.message}`));
+    }
+  });
+  chatHistory.addEventListener('wheel', (event) => {
+    event.stopPropagation();
+  }, { passive: true });
+  chatHistory.addEventListener('pointerdown', (event) => {
+    event.stopPropagation();
+  });
+  chatHistory.addEventListener('touchmove', (event) => {
+    event.stopPropagation();
+  }, { passive: true });
+  logToggleBtn.addEventListener('click', () => {
+    logEl.classList.toggle('collapsed');
+  });
   renderSettingsToggle.addEventListener('click', () => {
     renderSettingsPanel.classList.toggle('collapsed');
   });
   for (const [name, control] of Object.entries(renderControls)) {
     if (!control.input) continue;
-    control.input.value = String(state.renderSettings[name]);
-    if (control.label) control.label.textContent = state.renderSettings[name].toFixed(control.digits);
     control.input.addEventListener('input', () => setRenderSetting(name, Number(control.input.value)));
   }
+  saveRenderSettingsBtn.addEventListener('click', saveRenderSettings);
   document.querySelector('#resetViewBtn').addEventListener('click', () => {
     if (state.mesh) frameModel(state.mesh);
   });
+  syncRenderControls();
   applyRenderSettings();
 }
 
@@ -1703,11 +2370,12 @@ function applySoftConstraints(delta) {
   }
 }
 
+loadSavedRenderSettings();
 initScene();
 bindUI();
 animate();
 setInterval(pollCommands, 250);
-initAmmo().then(() => restoreLastModel()).finally(() => {
+initAmmo().then(() => restoreLastModel()).then(() => restoreSceneModel()).then(() => restoreVmdHistory()).finally(() => {
   setStatus(state.mesh ? '最近模型已恢复。' : 'Three.js 渲染器已就绪。');
 });
 log(`Three.js ${THREE.REVISION}`);

@@ -188,6 +188,14 @@ function loadModel(modelPath, opts) {
 
           $.scene.add(mesh);
 
+          if (window.PMXPhysicsOptimizer && opts.optimizePhysics !== false) {
+            var optReport = window.PMXPhysicsOptimizer.optimizeModel(mesh, {
+              modelId: modelPath,
+              useCache: true
+            });
+            console.log('[Renderer] Physics optimizer:', optReport);
+          }
+
           // 捕获 rest pose（IK 需要在 helper.add 之前）
           $.restPoseQuat = [];
           $.restPosePos = [];

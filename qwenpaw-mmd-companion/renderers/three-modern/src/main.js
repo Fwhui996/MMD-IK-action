@@ -48,6 +48,9 @@ const state = {
   motionFinishHandler: null,
   softEnabled: false,
   clothAssistEnabled: false,
+  clothLayerEnabled: false,
+  clothAssistScale: 1,
+  clothLayerScale: 0.126,
   pmxCompatFixes: false,
   softBoneIndices: [],
   softRestQuats: [],
@@ -175,6 +178,18 @@ app.innerHTML = `
         <span>手推衣物实验</span>
         <input id="clothAssistToggle" type="checkbox" />
       </label>
+      <label class="control-row">
+        <span>推衣半径 <b id="clothAssistScaleLabel">1.00</b></span>
+        <input id="clothAssistScale" type="range" min="0.2" max="1.2" step="0.02" value="1" />
+      </label>
+      <label class="toggle-row">
+        <span>衣物层间防穿</span>
+        <input id="clothLayerToggle" type="checkbox" />
+      </label>
+      <label class="control-row">
+        <span>层间半径 <b id="clothLayerScaleLabel">0.126</b></span>
+        <input id="clothLayerScale" type="range" min="0.02" max="0.3" step="0.002" value="0.126" />
+      </label>
       <label class="toggle-row">
         <span>PMX 兼容修复</span>
         <input id="pmxCompatToggle" type="checkbox" />
@@ -254,6 +269,11 @@ const physicsToggle = document.querySelector('#physicsToggle');
 const ikToggle = document.querySelector('#ikToggle');
 const softToggle = document.querySelector('#softToggle');
 const clothAssistToggle = document.querySelector('#clothAssistToggle');
+const clothAssistScale = document.querySelector('#clothAssistScale');
+const clothAssistScaleLabel = document.querySelector('#clothAssistScaleLabel');
+const clothLayerToggle = document.querySelector('#clothLayerToggle');
+const clothLayerScale = document.querySelector('#clothLayerScale');
+const clothLayerScaleLabel = document.querySelector('#clothLayerScaleLabel');
 const pmxCompatToggle = document.querySelector('#pmxCompatToggle');
 const resetPhysicsBtn = document.querySelector('#resetPhysicsBtn');
 const expressionSelect = document.querySelector('#expressionSelect');
@@ -1155,6 +1175,16 @@ function isTorsoColliderName(name) {
   return /上半身|下半身|センター|体|胸|胴|腰|腹|首|肩|torso|body|chest|spine|waist|hips|neck|shoulder/.test(normalized);
 }
 
+function getClothGroup(name) {
+  const normalized = normalizePhysicsName(name);
+  if (/袖|sleeve/.test(normalized)) return 'sleeve';
+  if (/裙|スカート|skirt/.test(normalized)) return 'skirt';
+  if (/外套|coat|披风|マント|cape/.test(normalized)) return 'outer';
+  if (/领结|领带|リボン|ribbon|飘/.test(normalized)) return 'ribbon';
+  if (/cloth/.test(normalized)) return 'cloth';
+  return 'other';
+}
+
 function getBodyDisplayName(bodyWrapper, bones = []) {
   const params = bodyWrapper?.params || {};
   const bone = params.boneIndex >= 0 ? bones[params.boneIndex] : null;
@@ -1215,6 +1245,8 @@ function buildClothAssist() {
     handBodies: [],
     torsoBodies: [],
     clothBodies: [],
+    layerPairs: [],
+    constrainedPairs: new Set(),
     prevHandPositions: new Map(),
     prevClothPositions: new Map(),
     transform: new Ammo.btTransform(),
@@ -1231,12 +1263,26 @@ function buildClothAssist() {
     const params = body.params || {};
     const name = getBodyDisplayName(body, bones);
     if (params.type === 0 && isArmColliderName(name)) {
-      assist.handBodies.push({ body, radius: Math.max(getApproxBodyRadius(params), 0.08) });
+      assist.handBodies.push({ body, radius: Math.max(getApproxBodyRadius(params) * state.clothAssistScale, 0.04) });
     } else if (params.type === 0 && isTorsoColliderName(name)) {
-      assist.torsoBodies.push({ body, radius: Math.max(getApproxBodyRadius(params), 0.12) });
+      assist.torsoBodies.push({ body, radius: Math.max(getApproxBodyRadius(params) * state.clothAssistScale, 0.06) });
     } else if (params.type !== 0 && isClothBodyName(name)) {
-      assist.clothBodies.push({ body, radius: Math.max(getApproxBodyRadius(params), 0.05) });
+      assist.clothBodies.push({
+        body,
+        group: getClothGroup(name),
+        boneIndex: params.boneIndex,
+        radius: Math.max(getApproxBodyRadius(params) * state.clothAssistScale, 0.025),
+        layerRadius: Math.max(getApproxBodyRadius(params) * state.clothLayerScale, 0.005),
+      });
     }
+  }
+
+  for (const constraint of physics.constraints || []) {
+    const indexA = physics.bodies.indexOf(constraint.bodyA);
+    const indexB = physics.bodies.indexOf(constraint.bodyB);
+    if (indexA < 0 || indexB < 0) continue;
+    assist.constrainedPairs.add(`${indexA}:${indexB}`);
+    assist.constrainedPairs.add(`${indexB}:${indexA}`);
   }
 
   for (const item of assist.handBodies) {
@@ -1246,8 +1292,16 @@ function buildClothAssist() {
     assist.prevClothPositions.set(item.body, getBodyWorldPositionInto(item.body, new THREE.Vector3()));
   }
 
+  for (let i = 0; i < assist.clothBodies.length; i++) {
+    for (let j = i + 1; j < assist.clothBodies.length; j++) {
+      const a = assist.clothBodies[i];
+      const b = assist.clothBodies[j];
+      if (shouldSolveClothLayerPair(a, b, physics.bodies)) assist.layerPairs.push([a, b]);
+    }
+  }
+
   state.clothAssist = assist;
-  log(`手推衣物实验：手臂碰撞体=${assist.handBodies.length}，躯干碰撞体=${assist.torsoBodies.length}，衣物刚体=${assist.clothBodies.length}`);
+  log(`手推衣物实验：手臂碰撞体=${assist.handBodies.length}，躯干碰撞体=${assist.torsoBodies.length}，衣物刚体=${assist.clothBodies.length}，层间对=${assist.layerPairs.length}`);
   return assist;
 }
 
@@ -1264,6 +1318,54 @@ function pushPointOutOfCollider(point, collider, clothRadius, padding) {
   }
   point.copy(colliderPos).addScaledVector(deltaVec, minDistance);
   return true;
+}
+
+function shouldSolveClothLayerPair(a, b, physicsBodies) {
+  if (a.group === b.group) return false;
+  if (a.group === 'other' || b.group === 'other' || a.group === 'cloth' || b.group === 'cloth') return false;
+  if (a.boneIndex >= 0 && b.boneIndex >= 0 && Math.abs(a.boneIndex - b.boneIndex) <= 2) return false;
+  const indexA = physicsBodies.indexOf(a.body);
+  const indexB = physicsBodies.indexOf(b.body);
+  if (indexA < 0 || indexB < 0) return false;
+  return !state.clothAssist.constrainedPairs.has(`${indexA}:${indexB}`);
+}
+
+function applyClothLayerCollision(delta, assist, physicsBodies) {
+  if (!state.clothLayerEnabled) return false;
+  let solved = 0;
+  let touched = false;
+  const maxPairs = 36;
+  const strength = 0.1;
+  const padding = 0.003;
+
+  for (const [a, b] of assist.layerPairs) {
+    if (solved >= maxPairs) return touched;
+    const posA = getBodyWorldPositionInto(a.body, assist.tmpClothPos);
+    const posB = getBodyWorldPositionInto(b.body, assist.tmpColliderPos);
+    const deltaVec = assist.tmpDelta.copy(posA).sub(posB);
+    let distance = deltaVec.length();
+    const minDistance = a.layerRadius + b.layerRadius + padding;
+    if (distance >= minDistance) continue;
+
+    if (distance < 1e-5) {
+      deltaVec.set(0, 1, 0);
+      distance = 1;
+    } else {
+      deltaVec.divideScalar(distance);
+    }
+
+    const correction = (minDistance - distance) * 0.5 * strength;
+    const correctedA = posA.clone().addScaledVector(deltaVec, correction);
+    const correctedB = posB.clone().addScaledVector(deltaVec, -correction);
+    setBodyWorldPosition(a.body, correctedA);
+    setBodyWorldPosition(b.body, correctedB);
+    assist.prevClothPositions.set(a.body, correctedA.clone());
+    assist.prevClothPositions.set(b.body, correctedB.clone());
+    solved++;
+    touched = true;
+  }
+
+  return touched;
 }
 
 function applyClothAssist(delta) {
@@ -1313,6 +1415,8 @@ function applyClothAssist(delta) {
 
     assist.prevHandPositions.set(hand.body, handPos.clone());
   }
+
+  touched = applyClothLayerCollision(delta, assist, physics.bodies) || touched;
 
   if (touched && typeof physics._updateBones === 'function') {
     physics._updateBones();
@@ -1573,9 +1677,39 @@ function setSoftProtection(enabled) {
 
 function setClothAssist(enabled) {
   state.clothAssistEnabled = enabled;
+  if (!enabled) {
+    state.clothLayerEnabled = false;
+    clothLayerToggle.checked = false;
+  }
   resetClothAssist();
   if (enabled) buildClothAssist();
   log(`手推衣物实验：${enabled ? '开' : '关'}`);
+}
+
+function setClothLayerCollision(enabled) {
+  state.clothLayerEnabled = enabled;
+  resetClothAssist();
+  if (enabled && !state.clothAssistEnabled) {
+    state.clothAssistEnabled = true;
+    clothAssistToggle.checked = true;
+    log('衣物层间防穿需要手推衣物实验，已自动开启。');
+  }
+  if (state.clothAssistEnabled) buildClothAssist();
+  log(`衣物层间防穿：${enabled ? '开' : '关'}`);
+}
+
+function setClothAssistScale(value) {
+  state.clothAssistScale = THREE.MathUtils.clamp(Number(value) || 1, 0.2, 1.2);
+  clothAssistScale.value = String(state.clothAssistScale);
+  clothAssistScaleLabel.textContent = state.clothAssistScale.toFixed(2);
+  if (state.clothAssistEnabled) buildClothAssist();
+}
+
+function setClothLayerScale(value) {
+  state.clothLayerScale = THREE.MathUtils.clamp(Number(value) || 0.126, 0.02, 0.3);
+  clothLayerScale.value = String(state.clothLayerScale);
+  clothLayerScaleLabel.textContent = state.clothLayerScale.toFixed(3);
+  if (state.clothAssistEnabled) buildClothAssist();
 }
 
 function setPmxCompatFixes(enabled) {
@@ -2485,6 +2619,9 @@ function bindUI() {
   ikToggle.addEventListener('change', () => setIK(ikToggle.checked));
   softToggle.addEventListener('change', () => setSoftProtection(softToggle.checked));
   clothAssistToggle.addEventListener('change', () => setClothAssist(clothAssistToggle.checked));
+  clothAssistScale.addEventListener('input', () => setClothAssistScale(clothAssistScale.value));
+  clothLayerToggle.addEventListener('change', () => setClothLayerCollision(clothLayerToggle.checked));
+  clothLayerScale.addEventListener('input', () => setClothLayerScale(clothLayerScale.value));
   pmxCompatToggle.addEventListener('change', () => setPmxCompatFixes(pmxCompatToggle.checked));
   resetPhysicsBtn.addEventListener('click', resetPhysics);
   expressionSelect.addEventListener('change', applySelectedExpression);

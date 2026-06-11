@@ -45,8 +45,9 @@ const state = {
   outlineFrame: 0,
   ammoReady: false,
   isPlaying: false,
-  softEnabled: true,
-  pmxCompatFixes: true,
+  motionFinishHandler: null,
+  softEnabled: false,
+  pmxCompatFixes: false,
   softBoneIndices: [],
   softRestQuats: [],
   rigidBodyDebug: null,
@@ -69,17 +70,11 @@ const state = {
 const SOFT_PATTERNS = [
   { pat: '裙', maxAngle: 0.08 },
   { pat: 'スカート', maxAngle: 0.08 },
-  { pat: '袖', maxAngle: 0.06 },
-  { pat: '腕', maxAngle: 0.06 },
-  { pat: '髪', maxAngle: 0.35 },
-  { pat: 'hair', maxAngle: 0.35 },
-  { pat: 'hair', maxAngle: 0.35 },
   { pat: '外套', maxAngle: 0.1 },
   { pat: '披风', maxAngle: 0.1 },
   { pat: 'マント', maxAngle: 0.1 },
   { pat: '领结', maxAngle: 0.08 },
   { pat: '领带', maxAngle: 0.1 },
-  { pat: '腕', maxAngle: 0.14 },
   { pat: '飘', maxAngle: 0.12 },
   { pat: 'ribbon', maxAngle: 0.12 },
 ];
@@ -172,11 +167,11 @@ app.innerHTML = `
       </label>
       <label class="toggle-row">
         <span>软部件保护</span>
-        <input id="softToggle" type="checkbox" checked />
+        <input id="softToggle" type="checkbox" />
       </label>
       <label class="toggle-row">
         <span>PMX 兼容修复</span>
-        <input id="pmxCompatToggle" type="checkbox" checked />
+        <input id="pmxCompatToggle" type="checkbox" />
       </label>
       <button id="resetPhysicsBtn">重置物理</button>
       <label class="control-row">
@@ -320,9 +315,7 @@ async function initAmmo() {
     log('Ammo 物理引擎已就绪。');
     return true;
   } catch (error) {
-    state.physics = false;
-    physicsToggle.checked = false;
-    log(`Ammo 初始化失败，物理效果已关闭：${error.message}`);
+    log(`Ammo 初始化失败，稍后会在播放动作时重试：${error.message}`);
     return false;
   }
 }
@@ -1192,6 +1185,15 @@ function resetModelToRest({ readdHelper = true } = {}) {
   }
 }
 
+function detachCurrentHelperForMotion() {
+  if (!state.mesh) return;
+  stopCurrentAnimation();
+  hideRigidBodies();
+  if (state.helper?.objects?.has(state.mesh)) {
+    state.helper.remove(state.mesh);
+  }
+}
+
 function makeRigidBodyDebugObject(params, material) {
   if (params.shapeType === 0) {
     return new THREE.Mesh(new THREE.SphereGeometry(params.width, 12, 8), material);
@@ -1583,15 +1585,20 @@ function configureOneShotAnimation() {
   const objects = state.helper?.objects?.get(state.mesh);
   const mixer = objects?.mixer;
   if (!mixer) return;
+  if (state.motionFinishHandler) {
+    mixer.removeEventListener('finished', state.motionFinishHandler);
+    state.motionFinishHandler = null;
+  }
   for (const action of mixer._actions || []) {
     action.setLoop(THREE.LoopOnce, 1);
     action.clampWhenFinished = false;
   }
-  mixer.addEventListener('finished', () => {
+  state.motionFinishHandler = () => {
     resetModelToRest({ readdHelper: true });
     log('VMD 播放结束。');
-  });
-  if (compatFixed.length) log(`PMX兼容修复：已降低这些材质的描边闪烁：${[...new Set(compatFixed)].join(', ')}`);
+    state.motionFinishHandler = null;
+  };
+  mixer.addEventListener('finished', state.motionFinishHandler);
 }
 
 function resetExpressions() {

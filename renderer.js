@@ -293,6 +293,10 @@ function applySoftConstraints(delta) {
 
 // ── IK 自动控制：腿部骨骼回 rest 时自动开启 ──
 function autoControlIK() {
+  if ($.isPlaying) {
+    $.helper.enabled.ik = $.ik;
+    return;
+  }
   if (!$.model || !$._legBoneIndices.length || !$.restPoseQuat.length) return;
   var THRESHOLD = 0.999;  // dot ≈ cos(2.5°)
   var bones = $.model.skeleton.bones;

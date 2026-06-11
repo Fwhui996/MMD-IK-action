@@ -63,7 +63,7 @@ def ensure_desktop_available() -> None:
     if desktop_health():
         _mark_owned()
         return
-    if os.environ.get("QWENPAW_MMD_AUTOSTART", "1") == "0":
+    if os.environ.get("QWENPAW_MMD_AUTOSTART", "0") == "0":
         return
     ok, reason = _spawn_desktop()
     if not ok:

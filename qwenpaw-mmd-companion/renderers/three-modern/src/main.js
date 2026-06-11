@@ -6,6 +6,7 @@ import { MMDAnimationHelper } from 'three/addons/animation/MMDAnimationHelper.js
 import { MMDParser } from 'three/addons/libs/mmdparser.module.js';
 
 import './styles.css';
+import { optimizePmxPhysics } from './pmxPhysicsOptimizer.js';
 
 const bridgeBaseUrl = new URLSearchParams(window.location.search).get('bridge') || 'http://127.0.0.1:8098';
 const LAST_MODEL_STORAGE_KEY = 'qwenpaw-mmd-last-model/v1';
@@ -933,6 +934,10 @@ async function loadModelFromUrl(url, label, resourcePath = '', options = {}) {
   }
 
   const mesh = await loader.loadAsync(url);
+  const optimization = optimizePmxPhysics(mesh, { modelId: options.serverPath || url, useCache: true });
+  if (optimization.ok && optimization.changed) {
+    log(`PMX物理自动优化：${optimization.changed}/${optimization.total} 个刚体，来源=${optimization.source}。`);
+  }
   applyModelStyle(mesh);
   state.mesh = mesh;
   state.currentModel = label;
@@ -970,6 +975,10 @@ async function loadSceneModelFromUrl(url, label, resourcePath = '', options = {}
   }
 
   const sceneModel = await loader.loadAsync(url);
+  const optimization = optimizePmxPhysics(sceneModel, { modelId: options.serverPath || url, useCache: true });
+  if (optimization.ok && optimization.changed) {
+    log(`场景PMX物理自动优化：${optimization.changed}/${optimization.total} 个刚体，来源=${optimization.source}。`);
+  }
   if (options?.serverPath) sceneModel.userData.serverPath = options.serverPath;
   applySceneModelStyle(sceneModel);
   state.sceneModel = sceneModel;
